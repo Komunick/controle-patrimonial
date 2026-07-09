@@ -64,6 +64,33 @@
 [data-tema="escuro"] thead th { background: #161B18; }
 [data-tema="escuro"] tbody tr.clickable:hover { background: #202722; }
 [data-tema="escuro"] .login-err { background: var(--danger-soft); border-color: #6B3030; }
+/* Barra do topo translúcida e hovers que eram claros fixos. */
+[data-tema="escuro"] .topbar { background: rgba(18, 22, 20, .85); }
+[data-tema="escuro"] .btn:hover { background: #232B26; border-color: var(--muted-2); }
+[data-tema="escuro"] .btn-ghost:hover { background: rgba(255, 255, 255, .08); }
+[data-tema="escuro"] .icon-btn:hover { background: rgba(255, 255, 255, .10); }
+[data-tema="escuro"] .seg-btn:hover { background: #242B26; }
+[data-tema="escuro"] .seg-btn.active { color: #EAF4EE; }
+/* Cartões, formulários e listas com fundos claros fixos. */
+[data-tema="escuro"] .sub-title .count { background: #262E28; }
+[data-tema="escuro"] .line-item { background: #212823; }
+[data-tema="escuro"] .inline-form { background: #171C19; }
+[data-tema="escuro"] .inv-bar { background: #2A322C; }
+[data-tema="escuro"] tbody tr.inv-row:hover { background: #202722; }
+[data-tema="escuro"] tbody tr.inv-row.is-conf { background: #1B2A20; }
+[data-tema="escuro"] tbody tr.inv-row.is-conf:hover { background: #21332A; }
+[data-tema="escuro"] .fchip.active { background: #1D3226; }
+/* Home Office: badges e datas em tons legíveis no escuro. */
+[data-tema="escuro"] .ho-badge.out { background: #12303F; color: #7CC3E8; border-color: #275B73; }
+[data-tema="escuro"] .ho-badge.back { background: #232B26; color: #A8B4AA; border-color: var(--line); }
+[data-tema="escuro"] .ho-date .val { color: #4FB6E8; }
+[data-tema="escuro"] .ho-date .val.back { color: #34D399; }
+[data-tema="escuro"] .tag.ho-missing { background: #3F1C1C; border-color: #6B3030; color: #F19999; }
+/* Pills de papel/categoria com texto que sumia no escuro. */
+[data-tema="escuro"] .pill.role-admin { border-color: #2F4A3A; }
+[data-tema="escuro"] .pill.role-op,
+[data-tema="escuro"] .pill.cat-patrimonio { color: #A3ADBD; }
+[data-tema="escuro"] .stat.is-warn { border-top-color: #E09A4A; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
