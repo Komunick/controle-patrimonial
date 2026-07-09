@@ -68,6 +68,11 @@ try {
   }
 }
 
+function esperaCurta(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+  catch (_) { /* SharedArrayBuffer indisponível: segue sem esperar */ }
+}
+
 function flush() {
   const tmp = DATA_FILE + '.tmp';
   const fd = fs.openSync(tmp, 'w');
@@ -77,7 +82,20 @@ function flush() {
   } finally {
     fs.closeSync(fd);
   }
-  fs.renameSync(tmp, DATA_FILE); // troca atômica
+  // rename é a troca ATÔMICA (o arquivo antigo nunca fica pela metade). No
+  // Windows pode falhar de forma transitória (EPERM/EACCES/EBUSY) se antivírus/
+  // backup estiver lendo o destino — tentamos algumas vezes antes de desistir.
+  let ultimoErro;
+  for (let tentativa = 0; tentativa < 10; tentativa++) {
+    try { fs.renameSync(tmp, DATA_FILE); return; }
+    catch (e) {
+      ultimoErro = e;
+      if (!['EPERM', 'EACCES', 'EBUSY', 'EEXIST'].includes(e.code)) throw e;
+      esperaCurta(20);
+    }
+  }
+  try { fs.unlinkSync(tmp); } catch (_) { /* ignore */ }
+  throw ultimoErro;
 }
 
 const localStorageShim = {
