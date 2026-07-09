@@ -3,8 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="color-scheme" content="light" />
+  <meta name="color-scheme" content="light dark" />
   <title>Controle Patrimonial · Brazil Transports</title>
+  <script>
+    // Aplica o tema salvo ANTES da primeira pintura (evita o "flash" claro).
+    // Sem preferência salva, segue o modo do sistema operacional.
+    (function () {
+      var tema = localStorage.getItem('patrimonio.tema');
+      if (tema !== 'escuro' && tema !== 'claro') {
+        tema = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches)
+          ? 'escuro' : 'claro';
+      }
+      document.documentElement.dataset.tema = tema;
+    })();
+  </script>
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
   <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png" />
   <link rel="apple-touch-icon" href="assets/favicon-180.png" />
@@ -20,6 +32,7 @@
         <div class="brand-sub">Controle Patrimonial</div>
       </div>
       <nav class="nav" id="nav"></nav>
+      <button id="btn-tema" class="tema-btn" type="button">🌙 Modo escuro</button>
       <div class="operator" id="operator-box">
         <span class="op-label">Operador</span>
         <button class="op-name" id="operator-btn" title="Trocar operador">—</button>
@@ -47,6 +60,23 @@
 
   <div class="toast-wrap" id="toast-wrap"></div>
 
+  <script>
+    // Alternância claro/escuro (preferência salva no navegador).
+    (function () {
+      var btn = document.getElementById('btn-tema');
+      function pintar() {
+        var escuro = document.documentElement.dataset.tema === 'escuro';
+        btn.textContent = escuro ? '☀️ Modo claro' : '🌙 Modo escuro';
+      }
+      btn.addEventListener('click', function () {
+        var novo = document.documentElement.dataset.tema === 'escuro' ? 'claro' : 'escuro';
+        document.documentElement.dataset.tema = novo;
+        localStorage.setItem('patrimonio.tema', novo);
+        pintar();
+      });
+      pintar();
+    })();
+  </script>
   <script src="vendor/qrcode-generator.js" defer></script>
   <script src="vendor/xlsx.mini.min.js" defer></script>
   <script src="qr.js" defer></script>
