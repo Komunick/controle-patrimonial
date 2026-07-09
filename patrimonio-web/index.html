@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
+  <title>Controle Patrimonial · Brazil Transports</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png" />
+  <link rel="apple-touch-icon" href="assets/favicon-180.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">
+          <img src="assets/logo.png" alt="Brazil Transports" />
+        </div>
+        <div class="brand-sub">Controle Patrimonial</div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="operator" id="operator-box">
+        <span class="op-label">Operador</span>
+        <button class="op-name" id="operator-btn" title="Trocar operador">—</button>
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <button class="menu-toggle" id="menu-toggle" aria-label="Menu">☰</button>
+        <h1 id="page-title">Painel</h1>
+        <div class="topbar-actions" id="topbar-actions"></div>
+      </header>
+      <main class="view" id="view"></main>
+    </div>
+  </div>
+
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <section class="drawer" id="drawer" aria-hidden="true">
+    <header class="drawer-head">
+      <h2 id="drawer-title">—</h2>
+      <button class="icon-btn" id="drawer-close" aria-label="Fechar">✕</button>
+    </header>
+    <div class="drawer-body" id="drawer-body"></div>
+  </section>
+
+  <div class="toast-wrap" id="toast-wrap"></div>
+
+  <script src="vendor/qrcode-generator.js" defer></script>
+  <script src="vendor/xlsx.mini.min.js" defer></script>
+  <script src="qr.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

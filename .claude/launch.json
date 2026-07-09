@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "chamados",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["C:\\Users\\brazil\\Sistema-chamados\\chamados-web\\server\\server.js"],
+      "port": 8090
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+# Dados reais e runtime — NUNCA versionar
+patrimonio-data/
+patrimonio-web/server/data/
+*.log
+*.bak
+
+# Node
+node_modules/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
