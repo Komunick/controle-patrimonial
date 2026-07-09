@@ -1332,69 +1332,121 @@
     await ensurePeople();
     const [assets, hoData] = await Promise.all([api('/api/assets'), api('/api/homeoffice?state=ativo')]);
     const emHO = new Set(hoData.rows.map((h) => h.asset_id));
-    const candidatos = assets.filter((a) => !emHO.has(a.id));
-    const hoje = todayStr();
+    const disponiveis = assets.filter((a) => !emHO.has(a.id));
+    const byId = {}; disponiveis.forEach((a) => { byId[a.id] = a; });
+    const persCache = {};        // asset_id -> sub-itens (carregados sob demanda)
+    const listadas = new Set();  // itens já exibidos na lista
 
     const body = openDrawer('Registrar saída para Home Office');
-    if (!candidatos.length) { body.innerHTML = '<div class="empty">Todos os itens já estão em Home Office ou não há itens cadastrados.</div>'; return; }
+    if (!disponiveis.length) { body.innerHTML = '<div class="empty">Todos os itens já estão em Home Office ou não há itens cadastrados.</div>'; return; }
     body.innerHTML = `
-      <div class="field">
-        <label for="hf-asset">Item levado *</label>
-        <select id="hf-asset"><option value="">Selecione o item…</option>${candidatos.map((a) => `<option value="${a.id}">${escapeHtml(a.asset_tag)} · ${escapeHtml(a.name || a.type_label)}</option>`).join('')}</select>
-      </div>
       <div class="field">
         <label for="hf-person">Quem levou *</label>
         <select id="hf-person">${peopleOptions('', 'Selecione a pessoa…')}</select>
       </div>
-      <div class="field">
-        <label for="hf-date">Data da saída</label>
-        <input id="hf-date" type="date" value="${hoje}">
+      <div class="field"><label for="hf-date">Data da saída</label><input id="hf-date" type="date" value="${todayStr()}"></div>
+      <div class="field" id="hf-items-field" hidden>
+        <label>Itens que está levando *</label>
+        <div id="hf-items"></div>
+        <div class="inline-form" style="margin-top:8px">
+          <select id="hf-extra"><option value="">Levou outro aparelho? Selecione…</option></select>
+          <button class="btn btn-ghost btn-sm" id="hf-extra-add" type="button">+ Adicionar</button>
+        </div>
+        <div class="hint">Marque o que a pessoa levou. Os sub-itens do aparelho aparecem ao marcar. Itens fora da lista dela entram por “Levou outro aparelho?”.</div>
       </div>
-      <div class="field" id="hf-pers-field" hidden>
-        <label>Sub-itens que foram junto</label>
-        <div id="hf-pers"></div>
-      </div>
-      <div class="field"><label for="hf-acc">Acessórios extras</label><input id="hf-acc" placeholder="Ex.: carregador, mochila, mouse avulso…"></div>
+      <div class="field"><label for="hf-acc">Acessórios extras</label><input id="hf-acc" placeholder="Ex.: mochila, carregador avulso…"></div>
       <div class="field"><label for="hf-notes">Observações</label><textarea id="hf-notes" rows="2"></textarea></div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="hf-cancel">Cancelar</button>
         <button class="btn btn-primary" id="hf-save">Registrar saída</button>
       </div>`;
 
-    $('hf-asset').addEventListener('change', async () => {
-      const id = $('hf-asset').value;
-      const wrap = $('hf-pers-field');
-      if (!id) { wrap.hidden = true; return; }
-      try {
-        const a = await api('/api/assets/' + id);
-        if (a.owners && a.owners.length) $('hf-person').value = String(a.owners[0].person_id);
-        if (a.peripherals && a.peripherals.length) {
-          $('hf-pers').innerHTML = a.peripherals.map((pe) => `
-            <label class="ho-chk"><input type="checkbox" value="${pe.id}" checked> ${escapeHtml(pe.asset_tag)} · ${escapeHtml(pe.type_label)}${pe.brand ? ' · ' + escapeHtml(pe.brand) : ''}</label>`).join('');
-          wrap.hidden = false;
-        } else { wrap.hidden = true; }
-      } catch (e) { wrap.hidden = true; }
-    });
+    const itemRow = (a, extra) => `
+      <label class="ho-chk" data-row="${a.id}">
+        <input type="checkbox" value="${a.id}"${extra ? ' checked' : ''}>
+        <span>${escapeHtml(a.asset_tag)} · ${escapeHtml(a.name || a.type_label)}${extra ? ' <span class="muted">(fora da lista da pessoa)</span>' : ''}</span>
+      </label>
+      <div id="hf-subs-${a.id}" style="margin:0 0 4px 26px"></div>`;
+
+    async function loadSubs(assetId) {
+      const box = $('hf-subs-' + assetId);
+      const a = byId[assetId];
+      if (!box || !a || !a.peripheral_count) return;
+      if (!persCache[assetId]) {
+        try { persCache[assetId] = (await api('/api/assets/' + assetId)).peripherals || []; }
+        catch (e) { persCache[assetId] = []; }
+      }
+      box.innerHTML = persCache[assetId].map((pe) => `
+        <label class="ho-chk"><input type="checkbox" value="${pe.id}" checked> ${escapeHtml(pe.asset_tag)} · ${escapeHtml(pe.type_label)}</label>`).join('');
+    }
+
+    function wireChecks() {
+      $('hf-items').querySelectorAll('.ho-chk[data-row] > input').forEach((c) => {
+        c.onchange = () => {
+          if (c.checked) loadSubs(parseInt(c.value, 10));
+          else { const b = $('hf-subs-' + c.value); if (b) b.innerHTML = ''; }
+        };
+      });
+    }
+
+    function extraOptions() {
+      $('hf-extra').innerHTML = '<option value="">Levou outro aparelho? Selecione…</option>' +
+        disponiveis.filter((a) => !listadas.has(a.id))
+          .map((a) => `<option value="${a.id}">${escapeHtml(a.asset_tag)} · ${escapeHtml(a.name || a.type_label)}</option>`).join('');
+    }
+
+    async function personChanged() {
+      const pid = $('hf-person').value;
+      const wrap = $('hf-items-field');
+      const list = $('hf-items');
+      listadas.clear();
+      if (!pid) { wrap.hidden = true; list.innerHTML = ''; return; }
+      wrap.hidden = false;
+      list.innerHTML = '<div class="muted" style="padding:6px 2px">Carregando itens da pessoa…</div>';
+      let own = [];
+      try { own = (await api('/api/assets?owner=' + encodeURIComponent(pid))).filter((a) => !emHO.has(a.id)); } catch (e) { own = []; }
+      own.forEach((a) => { listadas.add(a.id); byId[a.id] = byId[a.id] || a; });
+      list.innerHTML = own.length
+        ? own.map((a) => itemRow(a, false)).join('')
+        : '<div class="muted" style="padding:6px 2px">Nenhum item vinculado a esta pessoa — use “Levou outro aparelho?” abaixo.</div>';
+      wireChecks();
+      extraOptions();
+    }
+
+    $('hf-person').addEventListener('change', personChanged);
+    $('hf-extra-add').onclick = () => {
+      const id = parseInt($('hf-extra').value, 10);
+      if (!id || listadas.has(id) || !byId[id]) return;
+      listadas.add(id);
+      const vazio = $('hf-items').querySelector('.muted'); if (vazio) vazio.remove();
+      $('hf-items').insertAdjacentHTML('beforeend', itemRow(byId[id], true));
+      wireChecks();
+      extraOptions();
+      loadSubs(id); // itens extras entram já marcados
+    };
 
     $('hf-cancel').onclick = closeDrawer;
     $('hf-save').onclick = async () => {
-      const asset_id = $('hf-asset').value;
-      const person_id = $('hf-person').value;
-      if (!asset_id) { toast('Selecione o item.', 'err'); return; }
-      if (!person_id) { toast('Selecione a pessoa.', 'err'); return; }
-      const peripheral_ids = Array.from($('hf-pers').querySelectorAll('input:checked')).map((c) => parseInt(c.value, 10));
-      try {
-        await api('/api/homeoffice', { method: 'POST', body: {
-          asset_id: parseInt(asset_id, 10), person_id: parseInt(person_id, 10),
-          taken_at: $('hf-date').value || undefined,
-          peripheral_ids,
-          accessories: $('hf-acc').value.trim() || null,
-          notes: $('hf-notes').value.trim() || null,
-        } });
-        toast('Saída registrada.');
-        closeDrawer();
-        if (onDone) onDone(); else rerender();
-      } catch (e) { toast(e.message, 'err'); }
+      const pid = $('hf-person').value;
+      if (!pid) { toast('Selecione a pessoa.', 'err'); return; }
+      const marcados = Array.from($('hf-items').querySelectorAll('.ho-chk[data-row] > input:checked')).map((c) => parseInt(c.value, 10));
+      if (!marcados.length) { toast('Marque ao menos um item levado.', 'err'); return; }
+      const comuns = {
+        person_id: parseInt(pid, 10),
+        taken_at: $('hf-date').value || undefined,
+        accessories: $('hf-acc').value.trim() || null,
+        notes: $('hf-notes').value.trim() || null,
+      };
+      let okCount = 0; const erros = [];
+      for (const aid of marcados) {
+        const subsBox = $('hf-subs-' + aid);
+        const peripheral_ids = subsBox ? Array.from(subsBox.querySelectorAll('input:checked')).map((c) => parseInt(c.value, 10)) : [];
+        try { await api('/api/homeoffice', { method: 'POST', body: Object.assign({ asset_id: aid, peripheral_ids }, comuns) }); okCount++; }
+        catch (e) { erros.push((byId[aid] ? byId[aid].asset_tag : aid) + ': ' + e.message); }
+      }
+      if (okCount) toast(okCount === 1 ? 'Saída registrada.' : `${okCount} saídas registradas.`);
+      if (erros.length) toast(erros.join(' · '), 'err');
+      if (okCount) { closeDrawer(); if (onDone) onDone(); else rerender(); }
     };
   }
 
