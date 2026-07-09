@@ -31,6 +31,7 @@
       { key: 'ativo', label: 'Ativo', color: '#0E9F6E' },
       { key: 'manutencao', label: 'Em manutenção', color: '#C2710C' },
       { key: 'emprestado', label: 'Emprestado', color: '#2563EB' },
+      { key: 'home_office', label: 'Home Office', color: '#0284C7' },
       { key: 'reservado', label: 'Reservado', color: '#7C3AED' },
       { key: 'inativo', label: 'Inativo', color: '#6B7280' },
       { key: 'baixado', label: 'Baixado', color: '#B91C1C' },
@@ -306,10 +307,10 @@
   function emptyDB() {
     return {
       version: 1,
-      seq: { people: 0, assets: 0, peripherals: 0, assignments: 0, audit_log: 0, users: 1, rooms: 0 },
+      seq: { people: 0, assets: 0, peripherals: 0, assignments: 0, audit_log: 0, users: 1, rooms: 0, homeoffice: 0 },
       settings: defaultSettings(),
       users: defaultUsers(),
-      people: [], assets: [], peripherals: [], assignments: [], audit_log: [], rooms: [],
+      people: [], assets: [], peripherals: [], assignments: [], audit_log: [], rooms: [], homeoffice: [],
       inventory: { started_at: null, started_by: null, checks: {} },
     };
   }
@@ -317,7 +318,7 @@
   function ensureShape() {
     const e = emptyDB();
     if (!DB || typeof DB !== 'object') { DB = e; return; }
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice']) {
       if (!Array.isArray(DB[k])) DB[k] = [];
     }
     if (!DB.seq || typeof DB.seq !== 'object') DB.seq = e.seq;
@@ -337,7 +338,7 @@
     if (!('started_at' in DB.inventory)) DB.inventory.started_at = null;
     if (!('started_by' in DB.inventory)) DB.inventory.started_by = null;
     // recalcula contadores a partir do maior id existente (robustez)
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice']) {
       const arr = Array.isArray(DB[k]) ? DB[k] : [];
       let max = 0;
       for (const row of arr) if (row && typeof row.id === 'number' && row.id > max) max = row.id;
@@ -693,6 +694,107 @@
       return ok({ totalItems, peripheralCount, peopleCount, totalValueCents: valAssets + valPeriph, inMaintenance, unassigned, byCategory, byType, byStatus });
     }
 
+    // --- home office (aparelhos levados para casa) ---
+    if (r1 === 'homeoffice') {
+      const id = seg[2];
+      const sub = seg[3];
+      const enrich = (h) => {
+        const a = assetById(h.asset_id);
+        const p = personById(h.person_id);
+        const pers = (h.peripheral_ids || []).map((pid) => {
+          const pe = peripheralById(pid);
+          return pe ? { id: pe.id, asset_tag: pe.asset_tag, type_label: TYPE_LABEL[pe.type] || pe.type, returned: (h.returned_peripheral_ids || []).indexOf(pe.id) >= 0 } : null;
+        }).filter(Boolean);
+        return Object.assign({}, h, {
+          asset_tag: a ? a.asset_tag : null,
+          asset_name: a ? (a.name || TYPE_LABEL[a.type] || a.type) : '(item excluído)',
+          asset_type_label: a ? (TYPE_LABEL[a.type] || a.type) : null,
+          person_name: p ? p.name : '(pessoa excluída)',
+          peripherals: pers,
+        });
+      };
+      if (!id) {
+        if (method === 'GET') {
+          let rows = DB.homeoffice.slice();
+          if (query.state === 'ativo') rows = rows.filter((h) => !h.returned_at);
+          else if (query.state === 'devolvido') rows = rows.filter((h) => !!h.returned_at);
+          if (query.q) {
+            const t = String(query.q).toLowerCase();
+            const hit = (v) => v != null && String(v).toLowerCase().indexOf(t) >= 0;
+            rows = rows.filter((h) => { const e = enrich(h); return hit(e.asset_tag) || hit(e.asset_name) || hit(e.person_name) || hit(h.accessories) || hit(h.notes); });
+          }
+          rows.sort((x, y) => y.id - x.id);
+          const counts = {
+            active: DB.homeoffice.filter((h) => !h.returned_at).length,
+            returned: DB.homeoffice.filter((h) => !!h.returned_at).length,
+          };
+          return ok({ counts, rows: rows.map(enrich) });
+        }
+        if (method === 'POST') {
+          const b = body;
+          const a = assetById(b.asset_id);
+          if (!a) return fail(404, 'Item não encontrado');
+          const p = personById(b.person_id);
+          if (!p) return fail(400, 'Selecione a pessoa que levou o aparelho.');
+          if (DB.homeoffice.some((h) => h.asset_id === a.id && !h.returned_at)) return fail(409, 'Este item já está registrado em Home Office.');
+          const perIds = Array.isArray(b.peripheral_ids)
+            ? b.peripheral_ids.map(Number).filter((x) => DB.peripherals.some((pe) => pe.id === x && pe.parent_asset_id === a.id))
+            : [];
+          const nid = nextId('homeoffice');
+          const row = {
+            id: nid, asset_id: a.id, person_id: p.id,
+            taken_at: (b.taken_at && /^\d{4}-\d{2}-\d{2}$/.test(b.taken_at)) ? b.taken_at : nowLocal().slice(0, 10),
+            peripheral_ids: perIds,
+            accessories: b.accessories || null,
+            notes: b.notes || null,
+            prev_status: a.status,
+            returned_at: null, return_condition: null, return_notes: null, returned_peripheral_ids: [],
+            created_at: nowLocal(),
+          };
+          DB.homeoffice.push(row);
+          a.status = 'home_office';
+          a.updated_at = nowLocal();
+          audit(actor, 'ho_saida', 'homeoffice', nid, assetLabel(a), `Levado por ${p.name} em ${row.taken_at}`);
+          persist();
+          return ok(enrich(row), 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+      const cur = DB.homeoffice.find((h) => String(h.id) === String(id));
+      if (!cur) return fail(404, 'Registro de Home Office não encontrado');
+      if (sub === 'devolver' && method === 'POST') {
+        if (cur.returned_at) return fail(409, 'Este registro já foi devolvido.');
+        const b = body;
+        cur.returned_at = (b.returned_at && /^\d{4}-\d{2}-\d{2}$/.test(b.returned_at)) ? b.returned_at : nowLocal().slice(0, 10);
+        cur.return_condition = b.condition || null;
+        cur.return_notes = b.notes || null;
+        cur.returned_peripheral_ids = Array.isArray(b.returned_peripheral_ids) ? b.returned_peripheral_ids.map(Number) : [];
+        const a = assetById(cur.asset_id);
+        if (a) {
+          if (a.status === 'home_office') a.status = (cur.prev_status && cur.prev_status !== 'home_office') ? cur.prev_status : 'ativo';
+          if (b.condition) a.condition = b.condition;
+          a.updated_at = nowLocal();
+        }
+        const faltando = (cur.peripheral_ids || []).filter((x) => cur.returned_peripheral_ids.indexOf(x) < 0).length;
+        audit(actor, 'ho_volta', 'homeoffice', cur.id, a ? assetLabel(a) : ('registro ' + cur.id),
+          `Devolvido em ${cur.returned_at}` + (b.condition ? ` · condição: ${b.condition}` : '') + (faltando ? ` · ${faltando} sub-item(ns) não devolvido(s)` : ''));
+        persist();
+        return ok(enrich(cur));
+      }
+      if (method === 'DELETE') {
+        const a = assetById(cur.asset_id);
+        if (!cur.returned_at && a && a.status === 'home_office') {
+          a.status = (cur.prev_status && cur.prev_status !== 'home_office') ? cur.prev_status : 'ativo';
+          a.updated_at = nowLocal();
+        }
+        DB.homeoffice = DB.homeoffice.filter((h) => h.id !== cur.id);
+        audit(actor, 'excluir', 'homeoffice', cur.id, a ? assetLabel(a) : ('registro ' + cur.id), 'Registro de Home Office removido');
+        persist();
+        return ok({ ok: true });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
     // --- salas ---
     if (r1 === 'rooms') {
       const id = seg[2];
@@ -955,6 +1057,7 @@
           // ON DELETE CASCADE: peripherals (parent), assignments (asset)
           DB.peripherals = DB.peripherals.filter((pe) => pe.parent_asset_id !== cur.id);
           DB.assignments = DB.assignments.filter((g) => g.asset_id !== cur.id);
+          DB.homeoffice = DB.homeoffice.filter((h) => h.asset_id !== cur.id);
           DB.assets = DB.assets.filter((a) => a.id !== cur.id);
           if (DB.inventory && DB.inventory.checks) delete DB.inventory.checks[cur.id];
           audit(actor, 'excluir', 'asset', cur.id, assetLabel(cur), null);

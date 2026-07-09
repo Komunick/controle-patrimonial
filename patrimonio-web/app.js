@@ -266,6 +266,7 @@
     { seg: 'pesquisa', label: 'Pesquisa', ico: '⌕' },
     { seg: 'pessoas', label: 'Pessoas', ico: '☻' },
     { seg: 'salas', label: 'Locais', ico: '⌂' },
+    { seg: 'homeoffice', label: 'Home Office', ico: '⇄' },
     { sep: true },
     { seg: 'inventario', label: 'Inventário', ico: '☑' },
     { seg: 'etiquetas', label: 'Etiquetas', ico: '❒' },
@@ -317,6 +318,7 @@
         case 'pesquisa': setTitle('Pesquisa'); setTopbar(''); await renderSearch(); break;
         case 'pessoas': setTitle('Pessoas'); await renderPeople(); break;
         case 'salas': setTitle('Locais'); await renderRooms(); break;
+        case 'homeoffice': setTitle('Home Office'); await renderHomeOffice(); break;
         case 'inventario': setTitle('Inventário'); setTopbar(''); await renderInventory(); break;
         case 'etiquetas': setTitle('Etiquetas'); setTopbar(''); await renderLabels(); break;
         case 'auditoria': setTitle('Auditoria'); setTopbar(''); await renderAudit(); break;
@@ -1218,6 +1220,226 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Home Office (aparelhos levados para casa)
+  // ---------------------------------------------------------------------------
+  function hoDays(takenAt) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(takenAt || '');
+    if (!m) return '';
+    const d = Math.floor((Date.now() - new Date(+m[1], +m[2] - 1, +m[3]).getTime()) / 86400000);
+    if (d <= 0) return 'saiu hoje';
+    return d === 1 ? 'há 1 dia' : `há ${d} dias`;
+  }
+
+  async function renderHomeOffice() {
+    setTopbar('<button class="btn btn-primary" id="ho-new">+ Registrar saída</button>');
+    let hoFilter = 'ativo';
+    view().innerHTML = `
+      <div class="toolbar">
+        <div class="seg" id="ho-seg">
+          <button class="seg-btn active" data-f="ativo">Em Home Office <span class="seg-c" id="ho-c-atv">0</span></button>
+          <button class="seg-btn" data-f="devolvido">Devolvidos <span class="seg-c" id="ho-c-dev">0</span></button>
+        </div>
+        <div class="search"><input id="ho-q" placeholder="Buscar por item, pessoa ou acessório…"></div>
+      </div>
+      <div id="ho-list"></div>`;
+    $('ho-new').onclick = () => homeOfficeForm(load);
+
+    const hoCard = (h) => {
+      const out = !h.returned_at;
+      const persHtml = (h.peripherals || []).length
+        ? h.peripherals.map((pe) => out
+            ? `<span class="tag tag-per">${escapeHtml(pe.asset_tag)} · ${escapeHtml(pe.type_label)}</span>`
+            : `<span class="tag tag-per ${pe.returned ? '' : 'ho-missing'}">${pe.returned ? '✔' : '✖'} ${escapeHtml(pe.asset_tag)} · ${escapeHtml(pe.type_label)}</span>`).join(' ')
+        : '<span class="muted">nenhum</span>';
+      return `
+      <div class="panel ho-card ${out ? 'is-out' : 'is-back'}">
+        <div class="panel-pad">
+          <div class="ho-top">
+            <div class="li-main">
+              <div class="li-title" style="font-size:15px">${tagChip(h.asset_tag || '—')} ${escapeHtml(h.asset_name || '')}</div>
+              <div class="li-sub">com <strong>${escapeHtml(h.person_name || '—')}</strong>${h.asset_type_label ? ' · ' + escapeHtml(h.asset_type_label) : ''}</div>
+            </div>
+            <span class="ho-badge ${out ? 'out' : 'back'}">${out ? 'EM HOME OFFICE' : 'DEVOLVIDO'}</span>
+          </div>
+          <div class="ho-dates">
+            <div class="ho-date">
+              <span class="lbl">Saída</span>
+              <span class="val">${fmtDate(h.taken_at)}</span>
+              ${out ? `<span class="days">${hoDays(h.taken_at)}</span>` : ''}
+            </div>
+            ${!out ? `
+            <div class="ho-date">
+              <span class="lbl">Devolução</span>
+              <span class="val back">${fmtDate(h.returned_at)}</span>
+              ${h.return_condition ? `<span class="days">condição: ${escapeHtml(labelCondition(h.return_condition))}</span>` : ''}
+            </div>` : ''}
+          </div>
+          <div class="ho-info">
+            <div><span class="muted">Sub-itens levados:</span> ${persHtml}</div>
+            ${h.accessories ? `<div><span class="muted">Acessórios:</span> ${escapeHtml(h.accessories)}</div>` : ''}
+            ${h.notes ? `<div><span class="muted">Obs. saída:</span> ${escapeHtml(h.notes)}</div>` : ''}
+            ${h.return_notes ? `<div><span class="muted">Obs. devolução:</span> ${escapeHtml(h.return_notes)}</div>` : ''}
+          </div>
+          <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
+            ${out ? `<button class="btn btn-primary btn-sm" data-devolver="${h.id}">Registrar devolução</button>` : ''}
+            <button class="btn btn-ghost btn-sm" data-ver="${h.asset_id}">Ver item</button>
+            <button class="btn btn-ghost btn-sm" data-del="${h.id}">Excluir registro</button>
+          </div>
+        </div>
+      </div>`;
+    };
+
+    let lastRows = [];
+    const load = async () => {
+      const p = new URLSearchParams({ state: hoFilter });
+      const q = $('ho-q').value.trim(); if (q) p.set('q', q);
+      const data = await api('/api/homeoffice?' + p.toString());
+      lastRows = data.rows;
+      $('ho-c-atv').textContent = data.counts.active;
+      $('ho-c-dev').textContent = data.counts.returned;
+      $('ho-list').innerHTML = data.rows.length
+        ? data.rows.map(hoCard).join('')
+        : `<div class="panel"><div class="empty">${hoFilter === 'ativo'
+            ? 'Nenhum aparelho em Home Office no momento. Clique em “+ Registrar saída”.'
+            : 'Nenhuma devolução registrada ainda.'}</div></div>`;
+      $('ho-list').querySelectorAll('[data-devolver]').forEach((b) => {
+        b.onclick = () => { const h = lastRows.find((x) => String(x.id) === b.dataset.devolver); if (h) hoReturnForm(h, load); };
+      });
+      $('ho-list').querySelectorAll('[data-ver]').forEach((b) => { b.onclick = () => openAssetDetail(b.dataset.ver); });
+      $('ho-list').querySelectorAll('[data-del]').forEach((b) => {
+        b.onclick = async () => {
+          const ok = await confirmDialog('Excluir registro', 'Excluir este registro de Home Office? Se estiver ativo, o status do item volta ao anterior.', 'Excluir', true);
+          if (!ok) return;
+          try { await api('/api/homeoffice/' + b.dataset.del, { method: 'DELETE' }); toast('Registro excluído.'); load(); }
+          catch (e) { toast(e.message, 'err'); }
+        };
+      });
+    };
+
+    $('ho-seg').querySelectorAll('.seg-btn').forEach((b) => {
+      b.onclick = () => {
+        hoFilter = b.dataset.f;
+        $('ho-seg').querySelectorAll('.seg-btn').forEach((x) => x.classList.toggle('active', x === b));
+        load();
+      };
+    });
+    let deb;
+    $('ho-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(load, 250); });
+    await load();
+  }
+
+  async function homeOfficeForm(onDone) {
+    await ensurePeople();
+    const [assets, hoData] = await Promise.all([api('/api/assets'), api('/api/homeoffice?state=ativo')]);
+    const emHO = new Set(hoData.rows.map((h) => h.asset_id));
+    const candidatos = assets.filter((a) => !emHO.has(a.id));
+    const hoje = todayStr();
+
+    const body = openDrawer('Registrar saída para Home Office');
+    if (!candidatos.length) { body.innerHTML = '<div class="empty">Todos os itens já estão em Home Office ou não há itens cadastrados.</div>'; return; }
+    body.innerHTML = `
+      <div class="field">
+        <label for="hf-asset">Item levado *</label>
+        <select id="hf-asset"><option value="">Selecione o item…</option>${candidatos.map((a) => `<option value="${a.id}">${escapeHtml(a.asset_tag)} · ${escapeHtml(a.name || a.type_label)}</option>`).join('')}</select>
+      </div>
+      <div class="field">
+        <label for="hf-person">Quem levou *</label>
+        <select id="hf-person">${peopleOptions('', 'Selecione a pessoa…')}</select>
+      </div>
+      <div class="field">
+        <label for="hf-date">Data da saída</label>
+        <input id="hf-date" type="date" value="${hoje}">
+      </div>
+      <div class="field" id="hf-pers-field" hidden>
+        <label>Sub-itens que foram junto</label>
+        <div id="hf-pers"></div>
+      </div>
+      <div class="field"><label for="hf-acc">Acessórios extras</label><input id="hf-acc" placeholder="Ex.: carregador, mochila, mouse avulso…"></div>
+      <div class="field"><label for="hf-notes">Observações</label><textarea id="hf-notes" rows="2"></textarea></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="hf-cancel">Cancelar</button>
+        <button class="btn btn-primary" id="hf-save">Registrar saída</button>
+      </div>`;
+
+    $('hf-asset').addEventListener('change', async () => {
+      const id = $('hf-asset').value;
+      const wrap = $('hf-pers-field');
+      if (!id) { wrap.hidden = true; return; }
+      try {
+        const a = await api('/api/assets/' + id);
+        if (a.owners && a.owners.length) $('hf-person').value = String(a.owners[0].person_id);
+        if (a.peripherals && a.peripherals.length) {
+          $('hf-pers').innerHTML = a.peripherals.map((pe) => `
+            <label class="ho-chk"><input type="checkbox" value="${pe.id}" checked> ${escapeHtml(pe.asset_tag)} · ${escapeHtml(pe.type_label)}${pe.brand ? ' · ' + escapeHtml(pe.brand) : ''}</label>`).join('');
+          wrap.hidden = false;
+        } else { wrap.hidden = true; }
+      } catch (e) { wrap.hidden = true; }
+    });
+
+    $('hf-cancel').onclick = closeDrawer;
+    $('hf-save').onclick = async () => {
+      const asset_id = $('hf-asset').value;
+      const person_id = $('hf-person').value;
+      if (!asset_id) { toast('Selecione o item.', 'err'); return; }
+      if (!person_id) { toast('Selecione a pessoa.', 'err'); return; }
+      const peripheral_ids = Array.from($('hf-pers').querySelectorAll('input:checked')).map((c) => parseInt(c.value, 10));
+      try {
+        await api('/api/homeoffice', { method: 'POST', body: {
+          asset_id: parseInt(asset_id, 10), person_id: parseInt(person_id, 10),
+          taken_at: $('hf-date').value || undefined,
+          peripheral_ids,
+          accessories: $('hf-acc').value.trim() || null,
+          notes: $('hf-notes').value.trim() || null,
+        } });
+        toast('Saída registrada.');
+        closeDrawer();
+        if (onDone) onDone(); else rerender();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  function hoReturnForm(h, onDone) {
+    const body = openDrawer('Registrar devolução');
+    body.innerHTML = `
+      <div class="detail-head" style="margin-bottom:8px">
+        <div class="dh-info">
+          <div class="li-title">${tagChip(h.asset_tag || '—')} ${escapeHtml(h.asset_name || '')}</div>
+          <div class="li-sub">com ${escapeHtml(h.person_name || '—')} · saiu em ${fmtDate(h.taken_at)} (${hoDays(h.taken_at)})</div>
+        </div>
+      </div>
+      <div class="field"><label for="hr-date">Data da devolução</label><input id="hr-date" type="date" value="${todayStr()}"></div>
+      <div class="field"><label for="hr-cond">Condição do aparelho na volta</label><select id="hr-cond">${conditionOptions('')}</select></div>
+      ${(h.peripherals || []).length ? `
+      <div class="field">
+        <label>O que voltou junto (desmarque o que ficou faltando)</label>
+        <div id="hr-pers">${h.peripherals.map((pe) => `
+          <label class="ho-chk"><input type="checkbox" value="${pe.id}" checked> ${escapeHtml(pe.asset_tag)} · ${escapeHtml(pe.type_label)}</label>`).join('')}</div>
+      </div>` : ''}
+      <div class="field"><label for="hr-notes">Observações da devolução (estado, avarias, o que faltou…)</label><textarea id="hr-notes" rows="2"></textarea></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="hr-cancel">Cancelar</button>
+        <button class="btn btn-primary" id="hr-save">Confirmar devolução</button>
+      </div>`;
+
+    $('hr-cancel').onclick = closeDrawer;
+    $('hr-save').onclick = async () => {
+      const persEl = $('hr-pers');
+      const returned_peripheral_ids = persEl ? Array.from(persEl.querySelectorAll('input:checked')).map((c) => parseInt(c.value, 10)) : [];
+      try {
+        await api('/api/homeoffice/' + h.id + '/devolver', { method: 'POST', body: {
+          returned_at: $('hr-date').value || undefined,
+          condition: $('hr-cond').value || null,
+          returned_peripheral_ids,
+          notes: $('hr-notes').value.trim() || null,
+        } });
+        toast('Devolução registrada.');
+        closeDrawer();
+        if (onDone) onDone(); else rerender();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Inventário (conferência física dos itens)
   // ---------------------------------------------------------------------------
   async function inventoryCheckTag(text) {
@@ -1463,9 +1685,10 @@
     criar: 'Criou', editar: 'Editou', excluir: 'Excluiu', atribuir: 'Atribuiu dono',
     remover_dono: 'Removeu dono', leitura: 'Leitura QR', status: 'Alterou status',
     inventario: 'Inventário', login: 'Entrou', logout: 'Saiu', config: 'Configurações',
+    ho_saida: 'Saída p/ Home Office', ho_volta: 'Devolução Home Office',
     seed: 'Sistema',
   };
-  const ENTITY_LABELS = { asset: 'Item', peripheral: 'Sub-item', person: 'Pessoa', room: 'Sala', assignment: 'Vínculo', user: 'Operador', sistema: 'Sistema' };
+  const ENTITY_LABELS = { asset: 'Item', peripheral: 'Sub-item', person: 'Pessoa', room: 'Sala', homeoffice: 'Home Office', assignment: 'Vínculo', user: 'Operador', sistema: 'Sistema' };
   function auditActionLabel(a) { return ACTION_LABELS[a] || a; }
 
   async function renderAudit() {
@@ -1599,6 +1822,14 @@
       const personRows = [['Nome', 'Matrícula', 'Setor', 'E-mail', 'Telefone']];
       (dump.people || []).forEach((p) => personRows.push([p.name || '', p.registration || '', p.department || '', p.email || '', p.phone || '']));
       add('Pessoas', personRows);
+
+      const hoRows = [['Patrimônio', 'Item', 'Pessoa', 'Saída', 'Devolução', 'Condição na volta', 'Sub-itens levados', 'Acessórios', 'Obs. saída', 'Obs. devolução']];
+      (dump.homeoffice || []).forEach((h) => {
+        const a = assetsById[h.asset_id]; const p = peopleById[h.person_id];
+        const perNames = (h.peripheral_ids || []).map((pid) => { const pe = (dump.peripherals || []).find((x) => x.id === pid); return pe ? pe.asset_tag : pid; }).join(', ');
+        hoRows.push([a ? a.asset_tag : '', a ? (a.name || '') : '', p ? p.name : '', h.taken_at || '', h.returned_at || '', h.return_condition || '', perNames, h.accessories || '', h.notes || '', h.return_notes || '']);
+      });
+      add('Home Office', hoRows);
 
       const roomRows = [['Sala', 'Observações']];
       (dump.rooms || []).forEach((r) => roomRows.push([r.name || '', r.notes || '']));
