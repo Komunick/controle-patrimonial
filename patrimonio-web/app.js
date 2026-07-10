@@ -1546,21 +1546,6 @@
     assinado: { rotulo: 'Assinado', cls: 'ok' },
     cancelado: { rotulo: 'Cancelado', cls: 'na' },
   };
-  const epiLink = (token) => location.origin + '/assinar.html?t=' + encodeURIComponent(token);
-  async function copiarTexto(texto) {
-    try { await navigator.clipboard.writeText(texto); return true; }
-    catch (e) {
-      const ta = document.createElement('textarea');
-      ta.value = texto; document.body.appendChild(ta); ta.select();
-      try { document.execCommand('copy'); return true; }
-      catch (e2) { return false; }
-      finally { ta.remove(); }
-    }
-  }
-  function epiZap(entrega) {
-    const texto = 'Olá, ' + entrega.person_name + '! Segue o termo de entrega dos seus EPIs para assinatura digital (abra no celular, confira os itens e assine na tela): ' + epiLink(entrega.token);
-    window.open('https://wa.me/?text=' + encodeURIComponent(texto), '_blank');
-  }
   const epiPdfUrl = (token) => '/api/epi/pdf?token=' + encodeURIComponent(token);
   // O financeiro anexa o PDF assinado devolvido pelo colaborador — isso confirma a entrega.
   function epiAnexarPdf(entrega, aoConcluir) {
@@ -1609,7 +1594,7 @@
         (e.person_name || '').toLowerCase().includes(term) ||
         e.itens.some((it) => (it.nome || '').toLowerCase().includes(term)));
       $('epi-rows').innerHTML = !lista.length
-        ? '<div class="empty">Nenhuma entrega registrada. Clique em “+ Nova entrega” para gerar o primeiro link de assinatura.</div>'
+        ? '<div class="empty">Nenhuma entrega registrada. Clique em “+ Nova entrega” para gerar o primeiro termo em PDF.</div>'
         : `<div class="table-wrap"><table>
             <thead><tr><th>Colaborador</th><th>EPIs</th><th>Entrega</th><th>Situação</th><th></th></tr></thead>
             <tbody>${lista.map((e) => `
@@ -1621,19 +1606,19 @@
                   ${e.status === 'assinado' ? `<div class="muted">${escapeHtml(e.assinado_em)}</div>` : ''}</td>
                 <td><div class="row-actions">
                   ${e.status === 'pendente' ? `
-                    <button class="btn btn-mini btn-ghost" data-copiar="${e.id}">Copiar link</button>
-                    <button class="btn btn-mini btn-ghost" data-zap="${e.id}">WhatsApp</button>` : ''}
+                    <button class="btn btn-mini btn-ghost" data-pdf="${e.id}">Baixar PDF</button>
+                    <button class="btn btn-mini btn-ghost" data-anexar="${e.id}">Anexar assinado</button>` : ''}
                   <button class="btn btn-mini btn-primary" data-termo="${e.id}">Ver termo</button>
                 </div></td>
               </tr>`).join('')}</tbody></table></div>`;
-      $('epi-rows').querySelectorAll('[data-copiar]').forEach((b) => {
-        b.onclick = async () => {
-          const e = rows.find((x) => String(x.id) === b.dataset.copiar);
-          toast((await copiarTexto(epiLink(e.token))) ? 'Link copiado — envie ao colaborador.' : 'Não foi possível copiar. Abra “Ver termo” e copie de lá.', undefined);
+      $('epi-rows').querySelectorAll('[data-pdf]').forEach((b) => {
+        b.onclick = () => {
+          const e = rows.find((x) => String(x.id) === b.dataset.pdf);
+          window.open(epiPdfUrl(e.token), '_blank');
         };
       });
-      $('epi-rows').querySelectorAll('[data-zap]').forEach((b) => {
-        b.onclick = () => epiZap(rows.find((x) => String(x.id) === b.dataset.zap));
+      $('epi-rows').querySelectorAll('[data-anexar]').forEach((b) => {
+        b.onclick = () => epiAnexarPdf(rows.find((x) => String(x.id) === b.dataset.anexar), () => rerender());
       });
       $('epi-rows').querySelectorAll('[data-termo]').forEach((b) => {
         b.onclick = () => epiTermo(b.dataset.termo);
@@ -1667,11 +1652,12 @@
         <button type="button" class="btn btn-mini btn-ghost" id="epi-mais">+ Adicionar EPI</button></div>
       <div class="field"><label for="epi-obs">Observações</label>
         <textarea id="epi-obs" rows="2" placeholder="Ex.: troca por desgaste; primeira entrega…"></textarea></div>
-      <div class="hint">Ao salvar, o sistema gera um link para o colaborador conferir os itens e assinar
-        o recebimento na tela do celular — sem papel. O termo assinado fica arquivado aqui.</div>
+      <div class="hint">Ao salvar, o sistema gera o termo em PDF ("termo-epi-NOME.pdf") com a logo da empresa.
+        Envie ao colaborador, receba o PDF assinado de volta e anexe aqui — a entrega é confirmada
+        e o termo fica arquivado no sistema, sem papel.</div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="epi-cancelar">Cancelar</button>
-        <button class="btn btn-primary" id="epi-salvar">Salvar e gerar link</button>
+        <button class="btn btn-primary" id="epi-salvar">Salvar e gerar PDF</button>
       </div>`;
     const ligarRemover = () => body.querySelectorAll('.epi-tirar').forEach((b) => {
       b.onclick = () => { if (body.querySelectorAll('.epi-item-row').length > 1) b.closest('.epi-item-row').remove(); };
@@ -1696,22 +1682,18 @@
           method: 'POST',
           body: { person_name: nomePessoa, itens, obs: $('epi-obs').value.trim() || null },
         });
-        const link = epiLink(e.token);
         body.innerHTML = `
           <div class="okbig">✅ Entrega registrada!</div>
-          <p class="hint">Envie o link abaixo para <b>${escapeHtml(e.person_name)}</b> assinar o recebimento no celular:</p>
-          <div class="epi-linkbox mono" id="epi-link">${escapeHtml(link)}</div>
-          <p class="hint" style="margin-top:10px">Sem acesso ao link (offline/à distância)? Baixe o termo em PDF,
-            envie ao colaborador para assinar, e depois anexe o PDF assinado em “Ver termo”.</p>
+          <p class="hint">Baixe o termo em PDF e envie para <b>${escapeHtml(e.person_name)}</b> assinar
+            (por WhatsApp, e-mail ou impresso onde ele estiver). Quando o PDF assinado voltar,
+            anexe em “Ver termo” — a entrega será confirmada e arquivada aqui.</p>
           <div class="form-actions">
-            <button class="btn btn-primary" id="epi-copiar2">Copiar link</button>
-            <button class="btn btn-ghost" id="epi-zap2">Enviar por WhatsApp</button>
-            <button class="btn btn-ghost" id="epi-pdf2">Baixar termo em PDF</button>
+            <button class="btn btn-primary" id="epi-pdf2">Baixar termo em PDF</button>
+            <button class="btn btn-ghost" id="epi-anexar2">Anexar PDF assinado…</button>
             <button class="btn btn-ghost" id="epi-fechar2">Fechar</button>
           </div>`;
-        $('epi-copiar2').onclick = async () => toast((await copiarTexto(link)) ? 'Link copiado.' : 'Selecione e copie o texto do link.');
-        $('epi-zap2').onclick = () => epiZap(e);
         $('epi-pdf2').onclick = () => window.open(epiPdfUrl(e.token), '_blank');
+        $('epi-anexar2').onclick = () => epiAnexarPdf(e, () => { closeDrawer(); rerender(); });
         $('epi-fechar2').onclick = () => { closeDrawer(); rerender(); };
       } catch (e) { toast(e.message, 'err'); }
     };
@@ -1744,24 +1726,18 @@
           <div class="muted" style="margin-top:6px">Assinado por <b>${escapeHtml(e.assinado_nome)}</b>${e.assinado_doc ? ' (doc. ' + escapeHtml(e.assinado_doc) + ')' : ''} em ${escapeHtml(e.assinado_em)}${e.assinado_ip ? ' · IP ' + escapeHtml(e.assinado_ip) : ''}</div>
         </div>` : ''}
       ${e.status === 'pendente' ? `
-        <div class="field"><label>Link de assinatura</label>
-          <div class="epi-linkbox mono">${escapeHtml(epiLink(e.token))}</div>
-          <div class="hint" style="margin-top:8px">Ou pelo caminho offline: baixe o termo em PDF, o colaborador
-            assina e devolve, e você anexa o arquivo aqui — a entrega é confirmada na hora.</div></div>` : ''}
+        <div class="field"><label>Como confirmar</label>
+          <div class="hint">Baixe o termo em PDF ("termo-epi-${escapeHtml(e.person_name)}.pdf"), envie ao
+            colaborador para assinar e, quando o arquivo assinado voltar, anexe aqui —
+            a entrega é confirmada na hora e fica arquivada no sistema.</div></div>` : ''}
       <div class="form-actions">
         ${e.status === 'pendente' ? `
-          <button class="btn btn-primary" id="epi-copiar3">Copiar link</button>
-          <button class="btn btn-ghost" id="epi-zap3">WhatsApp</button>
-          <button class="btn btn-ghost" id="epi-pdf3">Baixar termo em PDF</button>
+          <button class="btn btn-primary" id="epi-pdf3">Baixar termo em PDF</button>
           <button class="btn btn-ghost" id="epi-anexar3">Anexar PDF assinado…</button>
           ${isAdmin() ? '<button class="btn btn-ghost" id="epi-cancelar3">Cancelar entrega</button>' : ''}` : ''}
         <button class="btn btn-ghost" id="epi-fechar3">Fechar</button>
       </div>`;
     $('epi-fechar3').onclick = closeDrawer;
-    const c3 = $('epi-copiar3');
-    if (c3) c3.onclick = async () => toast((await copiarTexto(epiLink(e.token))) ? 'Link copiado.' : 'Selecione e copie o texto do link.');
-    const z3 = $('epi-zap3');
-    if (z3) z3.onclick = () => epiZap(e);
     const p3 = $('epi-pdf3');
     if (p3) p3.onclick = () => window.open(epiPdfUrl(e.token), '_blank');
     const a3 = $('epi-anexar3');

@@ -177,7 +177,7 @@ function gerarTermoPdf(t) {
   texto(70, y, 10, false, 'Nome completo: ____________________________________________'); y -= 22;
   texto(70, y, 10, false, 'CPF: ____________________________'); y -= 30;
   texto(50, y, 8, false, `Como confirmar: assine este termo, fotografe ou digitalize em PDF e devolva ao setor financeiro/administrativo,`); y -= 10;
-  texto(50, y, 8, false, `que anexará o arquivo à entrega nº ${t.id} no sistema. Alternativa: assinatura direta pela tela, no link enviado.`);
+  texto(50, y, 8, false, `que anexará o arquivo assinado à entrega nº ${t.id} no Controle Patrimonial.`);
 
   const contentStr = ops.join('\n');
   const objs = [];
@@ -307,15 +307,19 @@ function handleApi(req, res) {
         notifyChange(urlPath, 'POST', operator, req);
         return sendJson(res, 200, { ok: true });
       }
-      // Termo de EPI em PDF para download (funciona pelo token do link).
+      // Termo de EPI em PDF para download (pelo token da entrega).
       if (urlPath === '/api/epi/pdf' && req.method === 'GET') {
         const q = new URLSearchParams(req.url.split('?')[1] || '');
         const rt = db.request('GET', '/api/epi/termo?token=' + encodeURIComponent(q.get('token') || ''), {}, operator);
         if (!rt.ok) return sendJson(res, rt.status || 404, rt.data || { error: 'Termo não encontrado.' });
         const pdf = gerarTermoPdf(rt.data);
+        // Nome do arquivo: "termo epi" + nome do colaborador (sem acentos/símbolos).
+        const slug = String(rt.data.person_name || '')
+          .normalize('NFD').replace(/[̀-ͯ]/g, '')
+          .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || ('entrega-' + rt.data.id);
         return send(res, 200, pdf, {
           'Content-Type': 'application/pdf',
-          'Content-Disposition': `attachment; filename="termo-epi-${rt.data.id}.pdf"`,
+          'Content-Disposition': `attachment; filename="termo-epi-${slug}.pdf"`,
           'Content-Length': pdf.length,
         });
       }
