@@ -606,3 +606,32 @@ tbody tr.inv-row.is-conf:hover { background: #ebf6ef; }
 .s5-hist:hover { background: var(--accent-soft, #F3F6F3); }
 [data-tema="escuro"] .s5-hist:hover { background: #232B26; }
 .s5-hist-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+
+/* ---------- Inspeção 5S · questionário estilo SafetyCulture ---------- */
+.s5-placar-linha { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 6px; }
+.s5-prog { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.s5-prog-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent, #1C7A45); transition: width .2s; }
+.s5-q { padding: 12px 10px; border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; background: var(--surface); }
+.s5-q.pende { border-color: #B23A2E; box-shadow: 0 0 0 1px #B23A2E inset; }
+.s5-q-txt { font-size: 13.5px; font-weight: 600; margin-bottom: 10px; }
+.s5-q-resps { display: flex; gap: 8px; }
+.s5-btn {
+  flex: 1; padding: 10px 0; border-radius: 10px; font-size: 14px; font-weight: 800;
+  border: 1.5px solid var(--line); background: var(--surface); color: var(--muted); cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.s5-btn.ok:hover  { border-color: #1C7A45; color: #1C7A45; }
+.s5-btn.bad:hover { border-color: #B23A2E; color: #B23A2E; }
+.s5-btn.na:hover  { border-color: var(--muted); color: inherit; }
+.s5-btn.sel.ok  { background: #1C7A45; border-color: #1C7A45; color: #fff; }
+.s5-btn.sel.bad { background: #B23A2E; border-color: #B23A2E; color: #fff; }
+.s5-btn.sel.na  { background: var(--muted, #667); border-color: var(--muted, #667); color: #fff; }
+[data-tema="escuro"] .s5-btn.sel.ok  { background: #2E8B57; border-color: #2E8B57; }
+[data-tema="escuro"] .s5-btn.sel.bad { background: #C4523F; border-color: #C4523F; }
+.s5-nota-link {
+  margin-top: 8px; border: 0; background: none; color: var(--accent, #1C7A45);
+  font-size: 12px; font-weight: 700; cursor: pointer; padding: 0;
+}
+.s5-nota-link:hover { text-decoration: underline; }
+.s5-q .s5-obs { margin-top: 8px; }
+.oculta5s { display: none !important; }

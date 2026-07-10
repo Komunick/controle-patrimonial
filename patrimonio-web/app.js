@@ -1224,54 +1224,58 @@
   // ---------------------------------------------------------------------------
   // Inspeção 5S (checklist detalhado por local)
   // ---------------------------------------------------------------------------
+  // Perguntas em linguagem simples: responda Sim (está bom), Não (tem problema) ou N/A.
   const CHECKLIST_5S = [
-    { s: '1º S — Utilização (Seiri): descarte do desnecessário', itens: [
-      'Não há itens quebrados, obsoletos ou sem uso acumulados no local',
-      'Não há materiais, caixas ou equipamentos desnecessários sobre mesas e bancadas',
-      'Não há papéis, documentos ou arquivos obsoletos acumulados',
-      'Não há itens pessoais em excesso na área de trabalho',
-      'Não há lixo, entulho ou sucata fora das lixeiras',
-      'Itens sem uso foram identificados e destinados (descarte, doação ou transferência)',
+    { s: '1º S · Utilização — o que não serve deve sair', itens: [
+      'O local está livre de itens quebrados, velhos ou sem uso?',
+      'As mesas e bancadas estão livres de materiais e caixas que não são usados ali?',
+      'O local está livre de papéis e documentos velhos acumulados?',
+      'Os itens pessoais se limitam ao necessário?',
+      'Todo o lixo está dentro das lixeiras (nada jogado pelo local)?',
+      'O que não serve mais já foi retirado (descarte, doação ou transferência)?',
     ] },
-    { s: '2º S — Organização (Seiton): um lugar para cada coisa', itens: [
-      'Cada item tem lugar definido e está no seu lugar',
-      'Itens e equipamentos estão identificados (etiqueta de patrimônio visível)',
-      'Itens de uso frequente estão de fácil acesso',
-      'Armários, gavetas e prateleiras estão organizados e identificados',
-      'Cabos e fios estão organizados, sem emaranhados ou soltos pelo chão',
-      'Corredores e áreas de circulação estão livres e desobstruídos',
-      'Móveis e equipamentos estão dispostos de forma funcional e segura',
+    { s: '2º S · Organização — um lugar para cada coisa', itens: [
+      'Cada coisa tem o seu lugar e está guardada no lugar certo?',
+      'Os equipamentos têm a etiqueta de patrimônio visível?',
+      'O que é usado todo dia está fácil de pegar?',
+      'Armários, gavetas e prateleiras estão arrumados e identificados?',
+      'Os fios e cabos estão organizados (nada embolado nem pelo chão)?',
+      'Os corredores e passagens estão livres, sem nada atrapalhando?',
+      'Os móveis e equipamentos estão bem posicionados e seguros?',
     ] },
-    { s: '3º S — Limpeza (Seiso)', itens: [
-      'Piso limpo, sem sujeira, poeira ou manchas',
-      'Mesas, bancadas e superfícies de trabalho limpas',
-      'Equipamentos (computadores, telefones, máquinas) limpos e conservados',
-      'Paredes, portas, janelas e vidros limpos',
-      'Lixeiras adequadas, sinalizadas e esvaziadas regularmente',
-      'Copa/banheiro do local limpos e abastecidos (quando houver)',
-      'Não há fonte de sujeira sem tratamento (infiltração, mofo, vazamento, pragas)',
+    { s: '3º S · Limpeza — ambiente limpo', itens: [
+      'O chão está limpo (sem poeira, sujeira ou manchas)?',
+      'As mesas e superfícies de trabalho estão limpas?',
+      'Os equipamentos (computador, telefone, máquinas) estão limpos?',
+      'Paredes, portas, janelas e vidros estão limpos?',
+      'As lixeiras dão conta e são esvaziadas com frequência?',
+      'A copa/banheiro do local está limpa e abastecida? (se não houver, marque N/A)',
+      'O local está livre de mofo, infiltração, vazamento ou pragas?',
     ] },
-    { s: '4º S — Padronização e saúde (Seiketsu)', itens: [
-      'Padrões de organização e limpeza estão definidos e visíveis (quadros, etiquetas, faixas)',
-      'Iluminação adequada e funcionando (sem lâmpadas queimadas)',
-      'Ventilação/climatização adequada ao ambiente',
-      'Sinalização de segurança adequada (extintores, saídas, avisos)',
-      'Condições ergonômicas adequadas (cadeiras, mesas, apoios)',
-      'A aparência geral do local transmite ordem e bem-estar',
+    { s: '4º S · Padronização — regras claras e ambiente saudável', itens: [
+      'As regras de organização e limpeza estão visíveis (quadros, etiquetas, faixas)?',
+      'A iluminação é boa e todas as lâmpadas funcionam?',
+      'A ventilação ou o ar-condicionado do ambiente funciona bem?',
+      'A sinalização de segurança está em ordem (extintor, saída, avisos)?',
+      'Cadeiras, mesas e apoios são adequados e confortáveis?',
+      'O local passa uma boa impressão geral de ordem e bem-estar?',
     ] },
-    { s: '5º S — Disciplina (Shitsuke)', itens: [
-      'A rotina de limpeza e organização é cumprida pela equipe',
-      'As pendências da inspeção anterior foram tratadas',
-      'Os colaboradores mantêm os padrões sem necessidade de cobrança',
-      'Materiais e equipamentos são devolvidos ao lugar após o uso',
-      'O cronograma de inspeções 5S está em dia',
+    { s: '5º S · Disciplina — manter o combinado todo dia', itens: [
+      'A equipe cumpre a rotina de limpeza e organização?',
+      'As pendências da última inspeção foram resolvidas?',
+      'As pessoas mantêm o padrão sem precisar ser cobradas?',
+      'Depois de usar, as pessoas devolvem as coisas ao lugar?',
+      'As inspeções 5S estão sendo feitas na frequência combinada?',
     ] },
   ];
   const RESP_5S = {
+    sim: { rotulo: 'Sim', cls: 'ok' },
+    nao: { rotulo: 'Não', cls: 'bad' },
+    na: { rotulo: 'N/A', cls: 'na' },
+    // valores de inspeções antigas (antes do formato Sim/Não)
     conforme: { rotulo: 'Conforme', cls: 'ok' },
     parcial: { rotulo: 'Parcial', cls: 'warn' },
     nao_conforme: { rotulo: 'Não conforme', cls: 'bad' },
-    na: { rotulo: 'N.A.', cls: 'na' },
   };
   const CLASSIF_5S = {
     excelente: { rotulo: 'Excelente', cls: 'ok' },
@@ -1331,7 +1335,7 @@
       $('s5-rows').innerHTML = !rows.length
         ? '<div class="empty">Nenhum local para este filtro.</div>'
         : `<div class="table-wrap"><table>
-            <thead><tr><th>Local</th><th>Última inspeção</th><th>Resultado</th><th class="num">Não conformes</th><th class="num">Inspeções</th><th></th></tr></thead>
+            <thead><tr><th>Local</th><th>Última inspeção</th><th>Resultado</th><th class="num">Respostas “Não”</th><th class="num">Inspeções</th><th></th></tr></thead>
             <tbody>${rows.map((r) => {
               const hist = porLocal[r.id] || [];
               const ult = hist[0];
@@ -1373,76 +1377,89 @@
     const linhas = [];
     let idx = 0;
     for (const grupo of CHECKLIST_5S) {
-      linhas.push(`<div class="s5-secao">${escapeHtml(grupo.s)}
-        <button type="button" class="btn btn-mini btn-ghost s5-tudo" data-secao="${escapeHtml(grupo.s)}">Tudo conforme</button></div>`);
+      linhas.push(`<div class="s5-secao">${escapeHtml(grupo.s)}</div>`);
       for (const item of grupo.itens) {
-        linhas.push(`<div class="s5-item" data-idx="${idx}" data-cat="${escapeHtml(grupo.s)}" data-item="${escapeHtml(item)}">
-          <div class="s5-item-txt">${escapeHtml(item)}</div>
-          <div class="s5-resps">
-            ${Object.entries(RESP_5S).map(([v, r]) =>
-              `<button type="button" class="s5-resp ${r.cls}" data-resp="${v}" title="${escapeHtml(r.rotulo)}">${escapeHtml(r.rotulo)}</button>`).join('')}
+        linhas.push(`<div class="s5-q" data-idx="${idx}" data-cat="${escapeHtml(grupo.s)}" data-item="${escapeHtml(item)}">
+          <div class="s5-q-txt">${escapeHtml(item)}</div>
+          <div class="s5-q-resps">
+            <button type="button" class="s5-btn ok" data-resp="sim">Sim</button>
+            <button type="button" class="s5-btn bad" data-resp="nao">Não</button>
+            <button type="button" class="s5-btn na" data-resp="na">N/A</button>
           </div>
-          <input class="s5-obs" maxlength="300" placeholder="Observação (opcional)">
+          <button type="button" class="s5-nota-link">✎ Adicionar anotação</button>
+          <input class="s5-obs oculta5s" maxlength="300" placeholder="Escreva a anotação…">
         </div>`);
         idx += 1;
       }
     }
     body.innerHTML = `
-      <div class="s5-placar" id="s5-placar">Responda os ${idx} itens — a pontuação aparece aqui.</div>
+      <div class="s5-placar" id="s5-placar">
+        <div class="s5-placar-linha">
+          <span id="s5-prog-txt">0 de ${idx} respondidas</span>
+          <strong id="s5-score-txt">Pontuação: —</strong>
+        </div>
+        <div class="s5-prog"><div class="s5-prog-fill" id="s5-prog-fill"></div></div>
+      </div>
       ${linhas.join('')}
       <div class="field"><label for="s5-obsg">Observações gerais do local</label>
         <textarea id="s5-obsg" rows="2" placeholder="Ex.: sala recém-reformada; mudança em andamento…"></textarea></div>
-      <div class="field"><label for="s5-plano">Plano de ação (o que corrigir até a próxima inspeção)</label>
+      <div class="field"><label for="s5-plano">Criar ação — o que corrigir até a próxima inspeção</label>
         <textarea id="s5-plano" rows="2" placeholder="Ex.: retirar caixas do corredor; trocar lâmpada; agendar limpeza…"></textarea></div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="s5-cancel">Cancelar</button>
-        <button class="btn btn-primary" id="s5-save">Salvar inspeção</button>
+        <button class="btn btn-primary" id="s5-save">Concluir inspeção</button>
       </div>`;
 
     const placar = () => {
-      let pontos = 0, validos = 0, respondidos = 0;
-      body.querySelectorAll('.s5-item').forEach((el2) => {
-        const sel = el2.querySelector('.s5-resp.sel');
+      let sims = 0, validos = 0, respondidos = 0;
+      body.querySelectorAll('.s5-q').forEach((el2) => {
+        const sel = el2.querySelector('.s5-btn.sel');
         if (!sel) return;
         respondidos += 1;
         const v = sel.dataset.resp;
         if (v === 'na') return;
         validos += 1;
-        if (v === 'conforme') pontos += 2;
-        else if (v === 'parcial') pontos += 1;
+        if (v === 'sim') sims += 1;
       });
-      const total = body.querySelectorAll('.s5-item').length;
-      if (!respondidos) { $('s5-placar').textContent = `Responda os ${total} itens — a pontuação aparece aqui.`; return; }
-      const pct = validos ? Math.round((pontos / (validos * 2)) * 100) : 0;
-      const cls = pct >= 90 ? 'excelente' : pct >= 70 ? 'organizado' : pct >= 50 ? 'desorganizado' : 'critico';
-      $('s5-placar').innerHTML =
-        `${respondidos}/${total} respondidos · Pontuação parcial: <strong>${validos ? pct + '%' : '—'}</strong> ` +
-        (validos ? chip5s(cls, null) : '');
+      const total = body.querySelectorAll('.s5-q').length;
+      $('s5-prog-txt').textContent = `${respondidos} de ${total} respondidas`;
+      $('s5-prog-fill').style.width = Math.round((respondidos / total) * 100) + '%';
+      if (!validos) { $('s5-score-txt').textContent = 'Pontuação: —'; return; }
+      const pct = Math.round((sims / validos) * 100);
+      $('s5-score-txt').textContent = `Pontuação: ${sims} / ${validos} (${pct}%)`;
     };
-    body.querySelectorAll('.s5-resp').forEach((b) => {
+    body.querySelectorAll('.s5-btn').forEach((b) => {
       b.onclick = () => {
-        b.closest('.s5-resps').querySelectorAll('.s5-resp').forEach((x) => x.classList.remove('sel'));
+        const q = b.closest('.s5-q');
+        q.querySelectorAll('.s5-btn').forEach((x) => x.classList.remove('sel'));
         b.classList.add('sel');
+        q.classList.remove('pende');
+        // resposta "Não" pede anotação do que está errado (como no SafetyCulture)
+        if (b.dataset.resp === 'nao') {
+          const obs = q.querySelector('.s5-obs');
+          obs.classList.remove('oculta5s');
+          obs.placeholder = 'O que está errado? (recomendado)';
+          q.querySelector('.s5-nota-link').classList.add('oculta5s');
+        }
         placar();
       };
     });
-    body.querySelectorAll('.s5-tudo').forEach((b) => {
+    body.querySelectorAll('.s5-nota-link').forEach((b) => {
       b.onclick = () => {
-        body.querySelectorAll('.s5-item').forEach((el2) => {
-          if (el2.dataset.cat !== b.dataset.secao) return;
-          el2.querySelectorAll('.s5-resp').forEach((x) => x.classList.toggle('sel', x.dataset.resp === 'conforme'));
-        });
-        placar();
+        b.classList.add('oculta5s');
+        const obs = b.closest('.s5-q').querySelector('.s5-obs');
+        obs.classList.remove('oculta5s');
+        obs.focus();
       };
     });
     $('s5-cancel').onclick = closeDrawer;
     $('s5-save').onclick = async () => {
       const items = [];
       let faltando = 0;
-      body.querySelectorAll('.s5-item').forEach((el2) => {
-        const sel = el2.querySelector('.s5-resp.sel');
-        if (!sel) { faltando += 1; el2.classList.add('pende'); return; }
-        el2.classList.remove('pende');
+      let primeiro = null;
+      body.querySelectorAll('.s5-q').forEach((el2) => {
+        const sel = el2.querySelector('.s5-btn.sel');
+        if (!sel) { faltando += 1; el2.classList.add('pende'); if (!primeiro) primeiro = el2; return; }
         items.push({
           cat: el2.dataset.cat,
           item: el2.dataset.item,
@@ -1450,13 +1467,17 @@
           obs: el2.querySelector('.s5-obs').value.trim() || null,
         });
       });
-      if (faltando) { toast(`Responda os ${faltando} item(ns) destacados antes de salvar.`, 'err'); return; }
+      if (faltando) {
+        toast(`Responda a(s) ${faltando} pergunta(s) destacada(s) antes de concluir.`, 'err');
+        if (primeiro) primeiro.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
       try {
         const r = await api('/api/inspections', {
           method: 'POST',
           body: { room_id: room.id, items, obs_geral: $('s5-obsg').value.trim() || null, plano_acao: $('s5-plano').value.trim() || null },
         });
-        toast(`Inspeção salva: ${r.score}% — ${(CLASSIF_5S[r.classificacao] || {}).rotulo || r.classificacao}.`);
+        toast(`Inspeção concluída: ${r.score}% — ${(CLASSIF_5S[r.classificacao] || {}).rotulo || r.classificacao}.`);
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
@@ -1471,7 +1492,7 @@
           <strong>${escapeHtml(i.created_at)}</strong>
           ${chip5s(i.classificacao, i.score)}
         </div>
-        <div class="muted">por ${escapeHtml(i.inspector)} · ${i.conformes} conformes · ${i.parciais} parciais · ${i.nao_conformes} não conformes${i.nao_aplicaveis ? ' · ' + i.nao_aplicaveis + ' N.A.' : ''}</div>
+        <div class="muted">por ${escapeHtml(i.inspector)} · ${i.conformes} Sim · ${i.nao_conformes} Não${i.parciais ? ' · ' + i.parciais + ' parciais' : ''}${i.nao_aplicaveis ? ' · ' + i.nao_aplicaveis + ' N/A' : ''}</div>
       </div>`).join('') || '<div class="empty">Nenhuma inspeção registrada.</div>';
     body.querySelectorAll('.s5-hist').forEach((d) => {
       d.onclick = () => detalhe5s(room, lista, lista.find((i) => String(i.id) === d.dataset.id));
@@ -1487,7 +1508,7 @@
     }
     body.innerHTML = `
       <div class="s5-placar">${chip5s(insp.classificacao, insp.score)}
-        <div class="muted" style="margin-top:6px">por ${escapeHtml(insp.inspector)} · ${insp.conformes} conformes · ${insp.parciais} parciais · ${insp.nao_conformes} não conformes${insp.nao_aplicaveis ? ' · ' + insp.nao_aplicaveis + ' N.A.' : ''}</div>
+        <div class="muted" style="margin-top:6px">por ${escapeHtml(insp.inspector)} · ${insp.conformes} Sim · ${insp.nao_conformes} Não${insp.parciais ? ' · ' + insp.parciais + ' parciais' : ''}${insp.nao_aplicaveis ? ' · ' + insp.nao_aplicaveis + ' N/A' : ''}</div>
       </div>
       ${insp.obs_geral ? `<div class="field"><label>Observações gerais</label><div class="hint">${escapeHtml(insp.obs_geral)}</div></div>` : ''}
       ${insp.plano_acao ? `<div class="field"><label>Plano de ação</label><div class="hint">${escapeHtml(insp.plano_acao)}</div></div>` : ''}

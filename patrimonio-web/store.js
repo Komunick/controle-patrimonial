@@ -611,13 +611,15 @@
           const b = body || {};
           const room = DB.rooms.find((r) => String(r.id) === String(b.room_id));
           if (!room) return fail(400, 'Local não encontrado. Selecione um local cadastrado.');
-          const RESPOSTAS = ['conforme', 'parcial', 'nao_conforme', 'na'];
+          // Formato atual: sim / nao / na (questionário). Aceita também os
+          // valores do formato antigo (conforme/parcial/nao_conforme).
+          const RESPOSTAS = ['sim', 'nao', 'na', 'conforme', 'parcial', 'nao_conforme'];
           const brutos = Array.isArray(b.items) ? b.items : [];
-          if (!brutos.length) return fail(400, 'A inspeção precisa do checklist preenchido.');
+          if (!brutos.length) return fail(400, 'A inspeção precisa do questionário preenchido.');
           const items = [];
           for (const it of brutos) {
             const resp = String((it && it.resp) || '');
-            if (!RESPOSTAS.includes(resp)) return fail(400, 'Todos os itens do checklist precisam de resposta (conforme, parcial, não conforme ou N.A.).');
+            if (!RESPOSTAS.includes(resp)) return fail(400, 'Todas as perguntas precisam de resposta (Sim, Não ou N/A).');
             items.push({
               cat: String((it && it.cat) || '').slice(0, 120),
               item: String((it && it.item) || '').slice(0, 200),
@@ -625,16 +627,16 @@
               obs: it && it.obs ? String(it.obs).slice(0, 300) : null,
             });
           }
-          // Pontuação: conforme 2 · parcial 1 · não conforme 0; N.A. fora da conta.
+          // Pontuação: Sim/conforme 2 · parcial (legado) 1 · Não 0; N/A fora da conta.
           let pontos = 0;
           let validos = 0;
           for (const it of items) {
             if (it.resp === 'na') continue;
             validos += 1;
-            if (it.resp === 'conforme') pontos += 2;
+            if (it.resp === 'sim' || it.resp === 'conforme') pontos += 2;
             else if (it.resp === 'parcial') pontos += 1;
           }
-          if (!validos) return fail(400, 'Marque ao menos um item aplicável (não deixe o checklist todo como N.A.).');
+          if (!validos) return fail(400, 'Responda ao menos uma pergunta aplicável (não deixe tudo como N/A).');
           const score = Math.round((pontos / (validos * 2)) * 100);
           const classificacao = score >= 90 ? 'excelente'
             : score >= 70 ? 'organizado'
@@ -651,9 +653,9 @@
             plano_acao: b.plano_acao ? String(b.plano_acao).slice(0, 1000) : null,
             score,
             classificacao,
-            conformes: items.filter((i) => i.resp === 'conforme').length,
+            conformes: items.filter((i) => i.resp === 'sim' || i.resp === 'conforme').length,
             parciais: items.filter((i) => i.resp === 'parcial').length,
-            nao_conformes: items.filter((i) => i.resp === 'nao_conforme').length,
+            nao_conformes: items.filter((i) => i.resp === 'nao' || i.resp === 'nao_conforme').length,
             nao_aplicaveis: items.filter((i) => i.resp === 'na').length,
             created_at: nowLocal(),
           };
