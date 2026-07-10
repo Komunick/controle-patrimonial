@@ -318,7 +318,7 @@
   function ensureShape() {
     const e = emptyDB();
     if (!DB || typeof DB !== 'object') { DB = e; return; }
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections']) {
       if (!Array.isArray(DB[k])) DB[k] = [];
     }
     if (!DB.seq || typeof DB.seq !== 'object') DB.seq = e.seq;
@@ -338,7 +338,7 @@
     if (!('started_at' in DB.inventory)) DB.inventory.started_at = null;
     if (!('started_by' in DB.inventory)) DB.inventory.started_by = null;
     // recalcula contadores a partir do maior id existente (robustez)
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections']) {
       const arr = Array.isArray(DB[k]) ? DB[k] : [];
       let max = 0;
       for (const row of arr) if (row && typeof row.id === 'number' && row.id > max) max = row.id;
@@ -590,6 +590,91 @@
         const u = DB.users.find((x) => String(x.id) === String(query.id));
         if (!u || u.active === false) return fail(404, 'Sessão inválida');
         return ok({ user: userPublic(u) });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
+    // --- inspeções 5S (checklist detalhado por local) ---
+    if (r1 === 'inspections') {
+      const id = seg[2];
+      if (!id) {
+        if (method === 'GET') {
+          let rows = DB.inspections.slice();
+          if (query.room_id) rows = rows.filter((i) => String(i.room_id) === String(query.room_id));
+          // mais recentes primeiro
+          rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || (b.id - a.id));
+          const lim = parseInt(query.limit, 10);
+          if (lim > 0) rows = rows.slice(0, lim);
+          return ok(rows);
+        }
+        if (method === 'POST') {
+          const b = body || {};
+          const room = DB.rooms.find((r) => String(r.id) === String(b.room_id));
+          if (!room) return fail(400, 'Local não encontrado. Selecione um local cadastrado.');
+          const RESPOSTAS = ['conforme', 'parcial', 'nao_conforme', 'na'];
+          const brutos = Array.isArray(b.items) ? b.items : [];
+          if (!brutos.length) return fail(400, 'A inspeção precisa do checklist preenchido.');
+          const items = [];
+          for (const it of brutos) {
+            const resp = String((it && it.resp) || '');
+            if (!RESPOSTAS.includes(resp)) return fail(400, 'Todos os itens do checklist precisam de resposta (conforme, parcial, não conforme ou N.A.).');
+            items.push({
+              cat: String((it && it.cat) || '').slice(0, 120),
+              item: String((it && it.item) || '').slice(0, 200),
+              resp,
+              obs: it && it.obs ? String(it.obs).slice(0, 300) : null,
+            });
+          }
+          // Pontuação: conforme 2 · parcial 1 · não conforme 0; N.A. fora da conta.
+          let pontos = 0;
+          let validos = 0;
+          for (const it of items) {
+            if (it.resp === 'na') continue;
+            validos += 1;
+            if (it.resp === 'conforme') pontos += 2;
+            else if (it.resp === 'parcial') pontos += 1;
+          }
+          if (!validos) return fail(400, 'Marque ao menos um item aplicável (não deixe o checklist todo como N.A.).');
+          const score = Math.round((pontos / (validos * 2)) * 100);
+          const classificacao = score >= 90 ? 'excelente'
+            : score >= 70 ? 'organizado'
+            : score >= 50 ? 'desorganizado'
+            : 'critico';
+          const nid = nextId('inspections');
+          const row = {
+            id: nid,
+            room_id: room.id,
+            room_name: room.name, // retrato do nome do local na data da inspeção
+            inspector: actor || 'Operador',
+            items,
+            obs_geral: b.obs_geral ? String(b.obs_geral).slice(0, 1000) : null,
+            plano_acao: b.plano_acao ? String(b.plano_acao).slice(0, 1000) : null,
+            score,
+            classificacao,
+            conformes: items.filter((i) => i.resp === 'conforme').length,
+            parciais: items.filter((i) => i.resp === 'parcial').length,
+            nao_conformes: items.filter((i) => i.resp === 'nao_conforme').length,
+            nao_aplicaveis: items.filter((i) => i.resp === 'na').length,
+            created_at: nowLocal(),
+          };
+          DB.inspections.push(row);
+          audit(actor, 'criar', 'inspection', nid, room.name, `Inspeção 5S — ${score}% (${classificacao})`);
+          persist();
+          return ok(row, 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+      const cur = DB.inspections.find((i) => String(i.id) === String(id));
+      if (!cur) return fail(404, 'Inspeção não encontrada');
+      if (method === 'GET') return ok(cur);
+      if (method === 'DELETE') {
+        // exclusão restrita a administradores ativos
+        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
+        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem excluir inspeções.');
+        DB.inspections = DB.inspections.filter((i) => i !== cur);
+        audit(actor, 'excluir', 'inspection', cur.id, cur.room_name, `Inspeção 5S de ${cur.created_at} (${cur.score}%)`);
+        persist();
+        return ok({ ok: true });
       }
       return fail(404, 'Rota não encontrada');
     }
