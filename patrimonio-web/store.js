@@ -609,7 +609,7 @@
           const login = String(b.login || '').trim().toLowerCase();
           const name = String(b.name || '').trim();
           if (!login) return fail(400, 'Informe o login.');
-          if (!/^[a-z0-9._-]{2,40}$/.test(login)) return fail(400, 'O login deve ter de 2 a 40 caracteres (letras, números, ponto, hífen ou sublinhado).');
+          if (!/^[a-z0-9.@_-]{2,80}$/.test(login)) return fail(400, 'O login deve ter de 2 a 80 caracteres (letras, números, ponto, hífen, sublinhado ou e-mail).');
           if (!name) return fail(400, 'Informe o nome do operador.');
           if (!b.password || String(b.password).length < 4) return fail(400, 'A senha deve ter ao menos 4 caracteres.');
           if (DB.users.some((u) => String(u.login).toLowerCase() === login)) return fail(409, 'Já existe um operador com esse login.');
