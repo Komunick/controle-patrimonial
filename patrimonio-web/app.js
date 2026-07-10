@@ -1630,14 +1630,13 @@
 
   async function epiForm() {
     const body = openDrawer('Nova entrega de EPI');
-    const pessoas = await ensurePeople(true);
-    if (!pessoas.length) {
-      body.innerHTML = '<div class="empty">Cadastre o colaborador na aba Pessoas antes de registrar a entrega.</div>';
-      return;
-    }
+    const pessoas = await ensurePeople(true).catch(() => []);
     body.innerHTML = `
       <div class="field"><label for="epi-pessoa">Colaborador(a) que recebe *</label>
-        <select id="epi-pessoa">${pessoas.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}</select></div>
+        <input id="epi-pessoa" maxlength="80" list="epi-pessoas-list"
+          placeholder="Escreva o nome (ou escolha do cadastro)">
+        <datalist id="epi-pessoas-list">${pessoas.map((p) => `<option value="${escapeHtml(p.name)}">`).join('')}</datalist>
+        <div class="hint">Pode escrever qualquer nome — não precisa estar no cadastro de Pessoas.</div></div>
       <div class="field"><label>EPIs entregues * <span class="muted">(nome, CA e quantidade)</span></label>
         <div id="epi-itens">${epiItemRow()}</div>
         <button type="button" class="btn btn-mini btn-ghost" id="epi-mais">+ Adicionar EPI</button></div>
@@ -1664,11 +1663,13 @@
         ca: r.querySelector('.epi-ca').value.trim() || null,
         quantidade: parseInt(r.querySelector('.epi-qt').value, 10) || 1,
       })).filter((it) => it.nome);
+      const nomePessoa = $('epi-pessoa').value.trim();
+      if (!nomePessoa) { toast('Escreva o nome de quem recebe os EPIs.', 'err'); return; }
       if (!itens.length) { toast('Informe ao menos um EPI.', 'err'); return; }
       try {
         const e = await api('/api/epi', {
           method: 'POST',
-          body: { person_id: $('epi-pessoa').value, itens, obs: $('epi-obs').value.trim() || null },
+          body: { person_name: nomePessoa, itens, obs: $('epi-obs').value.trim() || null },
         });
         const link = epiLink(e.token);
         body.innerHTML = `

@@ -743,8 +743,18 @@
           return ok(rows);
         }
         if (method === 'POST') {
-          const p = DB.people.find((x) => String(x.id) === String(body.person_id));
-          if (!p) return fail(400, 'Selecione o colaborador que vai receber os EPIs.');
+          // Nome livre: não precisa estar no cadastro de Pessoas. Se o nome
+          // (ou o person_id) bater com alguém cadastrado, a entrega é vinculada.
+          const nomeLivre = String(body.person_name || '').trim().slice(0, 80);
+          let p = null;
+          if (body.person_id != null && body.person_id !== '') {
+            p = DB.people.find((x) => String(x.id) === String(body.person_id));
+          }
+          if (!p && nomeLivre) {
+            p = DB.people.find((x) => String(x.name).trim().toLowerCase() === nomeLivre.toLowerCase());
+          }
+          const personName = p ? p.name : nomeLivre;
+          if (!personName || personName.length < 2) return fail(400, 'Escreva o nome de quem recebe os EPIs.');
           const brutos = Array.isArray(body.itens) ? body.itens : [];
           const itens = [];
           for (const it of brutos) {
@@ -764,7 +774,7 @@
           const nid = nextId('epi_entregas');
           const row = {
             id: nid, token,
-            person_id: p.id, person_name: p.name,
+            person_id: p ? p.id : null, person_name: personName,
             itens,
             obs: body.obs ? String(body.obs).slice(0, 300) : null,
             entregue_por: actor,
@@ -774,7 +784,7 @@
             assinatura_png: null, assinado_ip: null,
           };
           DB.epi_entregas.push(row);
-          audit(actor, 'criar', 'epi', nid, p.name,
+          audit(actor, 'criar', 'epi', nid, personName,
             'Entrega de EPI (' + itens.length + ' item(ns)) — aguardando assinatura');
           persist();
           return ok(row, 201);
