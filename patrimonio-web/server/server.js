@@ -319,6 +319,7 @@ function handleApi(req, res) {
           .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || ('entrega-' + rt.data.id);
         return send(res, 200, pdf, {
           'Content-Type': 'application/pdf',
+          'X-Content-Type-Options': 'nosniff',
           'Content-Disposition': `attachment; filename="termo-epi-${slug}.pdf"`,
           'Content-Length': pdf.length,
         });
@@ -359,6 +360,7 @@ function handleApi(req, res) {
           if (err) return sendJson(res, 404, { error: 'Arquivo do PDF não encontrado no servidor.' });
           send(res, 200, data, {
             'Content-Type': 'application/pdf',
+          'X-Content-Type-Options': 'nosniff',
             'Content-Disposition': `inline; filename="termo-epi-${m[1]}-assinado.pdf"`,
             'Content-Length': data.length,
           });

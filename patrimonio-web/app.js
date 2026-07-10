@@ -1547,6 +1547,25 @@
     cancelado: { rotulo: 'Cancelado', cls: 'na' },
   };
   const epiPdfUrl = (token) => '/api/epi/pdf?token=' + encodeURIComponent(token);
+  // Baixa o PDF via blob gerado pela própria página: evita o alerta de
+  // "arquivo perigoso" que o Chrome mostra para downloads diretos em HTTP.
+  async function epiBaixarPdf(entrega) {
+    try {
+      const r = await fetch(epiPdfUrl(entrega.token));
+      if (!r.ok) { const j = await r.json().catch(() => null); throw new Error((j && j.error) || 'Não foi possível gerar o PDF.'); }
+      const blob = await r.blob();
+      const slug = String(entrega.person_name || 'entrega')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'termo-epi-' + (slug || entrega.id) + '.pdf';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+      toast('PDF do termo gerado — confira nos downloads.');
+    } catch (e) { toast(e.message, 'err'); }
+  }
   // O financeiro anexa o PDF assinado devolvido pelo colaborador — isso confirma a entrega.
   function epiAnexarPdf(entrega, aoConcluir) {
     const input = document.createElement('input');
@@ -1612,10 +1631,7 @@
                 </div></td>
               </tr>`).join('')}</tbody></table></div>`;
       $('epi-rows').querySelectorAll('[data-pdf]').forEach((b) => {
-        b.onclick = () => {
-          const e = rows.find((x) => String(x.id) === b.dataset.pdf);
-          window.open(epiPdfUrl(e.token), '_blank');
-        };
+        b.onclick = () => epiBaixarPdf(rows.find((x) => String(x.id) === b.dataset.pdf));
       });
       $('epi-rows').querySelectorAll('[data-anexar]').forEach((b) => {
         b.onclick = () => epiAnexarPdf(rows.find((x) => String(x.id) === b.dataset.anexar), () => rerender());
@@ -1663,6 +1679,18 @@
       b.onclick = () => { if (body.querySelectorAll('.epi-item-row').length > 1) b.closest('.epi-item-row').remove(); };
     });
     ligarRemover();
+    // Enter pula para o próximo campo; no último, salva e já gera o PDF.
+    body.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      const alvo = ev.target;
+      if (!alvo.matches || !alvo.matches('#epi-pessoa, .epi-nome, .epi-ca, .epi-qt')) return;
+      ev.preventDefault();
+      const campos = [...body.querySelectorAll('#epi-pessoa, .epi-nome, .epi-ca, .epi-qt')];
+      const prox = campos[campos.indexOf(alvo) + 1];
+      if (prox) { prox.focus(); if (prox.select) prox.select(); }
+      else $('epi-salvar').click();
+    });
+    setTimeout(() => { const c = $('epi-pessoa'); if (c) c.focus(); }, 50);
     $('epi-mais').onclick = () => {
       $('epi-itens').insertAdjacentHTML('beforeend', epiItemRow());
       ligarRemover();
@@ -1692,9 +1720,10 @@
             <button class="btn btn-ghost" id="epi-anexar2">Anexar PDF assinado…</button>
             <button class="btn btn-ghost" id="epi-fechar2">Fechar</button>
           </div>`;
-        $('epi-pdf2').onclick = () => window.open(epiPdfUrl(e.token), '_blank');
+        $('epi-pdf2').onclick = () => epiBaixarPdf(e);
         $('epi-anexar2').onclick = () => epiAnexarPdf(e, () => { closeDrawer(); rerender(); });
         $('epi-fechar2').onclick = () => { closeDrawer(); rerender(); };
+        epiBaixarPdf(e); // já baixa o PDF na hora — é o próximo passo natural
       } catch (e) { toast(e.message, 'err'); }
     };
   }
@@ -1739,7 +1768,7 @@
       </div>`;
     $('epi-fechar3').onclick = closeDrawer;
     const p3 = $('epi-pdf3');
-    if (p3) p3.onclick = () => window.open(epiPdfUrl(e.token), '_blank');
+    if (p3) p3.onclick = () => epiBaixarPdf(e);
     const a3 = $('epi-anexar3');
     if (a3) a3.onclick = () => epiAnexarPdf(e, () => { closeDrawer(); rerender(); });
     const x3 = $('epi-cancelar3');
