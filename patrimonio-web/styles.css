@@ -635,3 +635,11 @@ tbody tr.inv-row.is-conf:hover { background: #ebf6ef; }
 .s5-nota-link:hover { text-decoration: underline; }
 .s5-q .s5-obs { margin-top: 8px; }
 .oculta5s { display: none !important; }
+
+/* ---------- Entrega de EPIs (assinatura digital por link) ---------- */
+.epi-item-row { display: grid; grid-template-columns: 1fr 84px 64px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
+.epi-item-row input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 13px; background: var(--surface); color: inherit; }
+.epi-linkbox { border: 1px dashed var(--accent); border-radius: 10px; padding: 10px 12px; font-size: 12px; word-break: break-all; background: var(--accent-soft, #F0FAF6); user-select: all; }
+[data-tema="escuro"] .epi-linkbox { background: #1D3226; }
+.epi-assin { width: 100%; max-width: 420px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.okbig { font-size: 17px; font-weight: 800; margin-bottom: 8px; }

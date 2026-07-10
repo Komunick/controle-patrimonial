@@ -144,7 +144,8 @@ function handleApi(req, res) {
         return sendJson(res, 200, { ok: true });
       }
       // Todas as demais rotas vão para a lógica compartilhada (store.js).
-      const r = db.request(req.method, req.url, body, operator);
+      const r = db.request(req.method, req.url, body, operator,
+        { ip: (req.socket && req.socket.remoteAddress) || '' });
       if (r.ok && (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') && !urlPath.startsWith('/api/auth')) {
         notifyChange(urlPath, req.method, operator, req);
       }

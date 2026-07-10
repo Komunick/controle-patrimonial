@@ -318,7 +318,7 @@
   function ensureShape() {
     const e = emptyDB();
     if (!DB || typeof DB !== 'object') { DB = e; return; }
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas']) {
       if (!Array.isArray(DB[k])) DB[k] = [];
     }
     if (!DB.seq || typeof DB.seq !== 'object') DB.seq = e.seq;
@@ -338,7 +338,7 @@
     if (!('started_at' in DB.inventory)) DB.inventory.started_at = null;
     if (!('started_by' in DB.inventory)) DB.inventory.started_by = null;
     // recalcula contadores a partir do maior id existente (robustez)
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas']) {
       const arr = Array.isArray(DB[k]) ? DB[k] : [];
       let max = 0;
       for (const row of arr) if (row && typeof row.id === 'number' && row.id > max) max = row.id;
@@ -677,6 +677,123 @@
         audit(actor, 'excluir', 'inspection', cur.id, cur.room_name, `Inspeção 5S de ${cur.created_at} (${cur.score}%)`);
         persist();
         return ok({ ok: true });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
+    // --- entrega de EPIs com assinatura digital por link (sem papel) ---
+    if (r1 === 'epi') {
+      const sub = seg[2];
+
+      // PÚBLICA: o colaborador abre o link com o token e vê o termo.
+      if (sub === 'termo' && method === 'GET') {
+        const t = String(query.token || '');
+        const e2 = t && DB.epi_entregas.find((x) => x.token === t);
+        if (!e2) return fail(404, 'Termo não encontrado. Confira o link com quem o enviou.');
+        return ok({
+          company: DB.settings.company,
+          person_name: e2.person_name,
+          itens: e2.itens,
+          obs: e2.obs || null,
+          entregue_por: e2.entregue_por,
+          created_at: e2.created_at,
+          status: e2.status,
+          assinado_em: e2.assinado_em || null,
+          assinado_nome: e2.assinado_nome || null,
+        });
+      }
+
+      // PÚBLICA: o colaborador assina o recebimento (uma única vez).
+      if (sub === 'assinar' && method === 'POST') {
+        const t = String(body.token || '');
+        const e2 = t && DB.epi_entregas.find((x) => x.token === t);
+        if (!e2) return fail(404, 'Termo não encontrado. Confira o link com quem o enviou.');
+        if (e2.status === 'cancelado') return fail(400, 'Esta entrega foi cancelada. Procure quem enviou o link.');
+        if (e2.status === 'assinado') return fail(409, 'Este termo já foi assinado em ' + e2.assinado_em + '.');
+        if (body.concordo !== true) return fail(400, 'É preciso marcar que leu e concorda com o termo.');
+        const nome = String(body.nome || '').trim().slice(0, 80);
+        if (!nome) return fail(400, 'Informe o seu nome completo.');
+        const png = String(body.assinatura_png || '');
+        if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(png)) return fail(400, 'Assinatura inválida. Assine no quadro e tente novamente.');
+        if (png.length < 2000) return fail(400, 'Assinatura muito curta. Assine no quadro antes de confirmar.');
+        if (png.length > 400000) return fail(400, 'Assinatura grande demais. Limpe o quadro e assine de novo.');
+        e2.status = 'assinado';
+        e2.assinado_em = nowLocal();
+        e2.assinado_nome = nome;
+        e2.assinado_doc = String(body.documento || '').trim().slice(0, 20) || null;
+        e2.assinatura_png = png;
+        e2.assinado_ip = String((reqExtra && reqExtra.ip) || '') || null;
+        audit(nome, 'assinar', 'epi', e2.id, e2.person_name,
+          'Termo de entrega de EPI assinado (' + e2.itens.length + ' item(ns))');
+        persist();
+        return ok({ ok: true, assinado_em: e2.assinado_em, assinado_nome: nome });
+      }
+
+      // OPERADORES: lista (sem a imagem da assinatura, que é pesada).
+      if (!sub) {
+        if (method === 'GET') {
+          const rows = DB.epi_entregas.slice()
+            .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || (b.id - a.id))
+            .map((e2) => ({
+              id: e2.id, token: e2.token, person_id: e2.person_id, person_name: e2.person_name,
+              itens: e2.itens, obs: e2.obs || null, entregue_por: e2.entregue_por,
+              created_at: e2.created_at, status: e2.status,
+              assinado_em: e2.assinado_em || null, assinado_nome: e2.assinado_nome || null,
+            }));
+          return ok(rows);
+        }
+        if (method === 'POST') {
+          const p = DB.people.find((x) => String(x.id) === String(body.person_id));
+          if (!p) return fail(400, 'Selecione o colaborador que vai receber os EPIs.');
+          const brutos = Array.isArray(body.itens) ? body.itens : [];
+          const itens = [];
+          for (const it of brutos) {
+            const nomeEpi = String((it && it.nome) || '').trim().slice(0, 120);
+            if (!nomeEpi) continue;
+            itens.push({
+              nome: nomeEpi,
+              ca: String((it && it.ca) || '').trim().slice(0, 30) || null,
+              quantidade: Math.max(1, parseInt((it && it.quantidade), 10) || 1),
+            });
+          }
+          if (!itens.length) return fail(400, 'Informe ao menos um EPI (nome do equipamento; CA e quantidade se tiver).');
+          // Token do link: aleatoriedade forte no servidor; reserva no navegador.
+          const token = (typeof __randomHex === 'function')
+            ? __randomHex(20)
+            : sha256(randSalt() + Date.now() + Math.random()).slice(0, 40);
+          const nid = nextId('epi_entregas');
+          const row = {
+            id: nid, token,
+            person_id: p.id, person_name: p.name,
+            itens,
+            obs: body.obs ? String(body.obs).slice(0, 300) : null,
+            entregue_por: actor,
+            created_at: nowLocal(),
+            status: 'pendente',
+            assinado_em: null, assinado_nome: null, assinado_doc: null,
+            assinatura_png: null, assinado_ip: null,
+          };
+          DB.epi_entregas.push(row);
+          audit(actor, 'criar', 'epi', nid, p.name,
+            'Entrega de EPI (' + itens.length + ' item(ns)) — aguardando assinatura');
+          persist();
+          return ok(row, 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+
+      // OPERADORES: termo completo (inclui a assinatura) e cancelamento.
+      const cur = DB.epi_entregas.find((x) => String(x.id) === String(sub));
+      if (!cur) return fail(404, 'Entrega não encontrada');
+      if (method === 'GET') return ok(cur);
+      if (seg[3] === 'cancelar' && method === 'POST') {
+        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
+        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem cancelar entregas.');
+        if (cur.status === 'assinado') return fail(400, 'Termo já assinado não pode ser cancelado.');
+        cur.status = 'cancelado';
+        audit(actor, 'cancelar', 'epi', cur.id, cur.person_name, 'Entrega de EPI cancelada');
+        persist();
+        return ok(cur);
       }
       return fail(404, 'Rota não encontrada');
     }
@@ -1309,7 +1426,9 @@
     return fail(404, 'Rota não encontrada');
   }
 
-  function request(method, rawPath, body, operator) {
+  let reqExtra = {}; // dados da requisição vindos do servidor (ex.: IP do assinante)
+  function request(method, rawPath, body, operator, extra) {
+    reqExtra = (extra && typeof extra === 'object') ? extra : {};
     method = (method || 'GET').toUpperCase();
     body = body || {};
     const actor = (operator == null ? '' : String(operator)).slice(0, 80) || 'sistema';

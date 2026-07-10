@@ -267,6 +267,7 @@
     { seg: 'pessoas', label: 'Pessoas', ico: '☻' },
     { seg: 'salas', label: 'Locais', ico: '⌂' },
     { seg: 'homeoffice', label: 'Home Office', ico: '⇄' },
+    { seg: 'epis', label: 'EPIs', ico: '⛑' },
     { sep: true },
     { seg: 'inventario', label: 'Inventário', ico: '☑' },
     { seg: 'inspecao', label: 'Inspeção 5S', ico: '✦' },
@@ -320,6 +321,7 @@
         case 'pessoas': setTitle('Pessoas'); await renderPeople(); break;
         case 'salas': setTitle('Locais'); await renderRooms(); break;
         case 'homeoffice': setTitle('Home Office'); await renderHomeOffice(); break;
+        case 'epis': setTitle('Entrega de EPIs'); await renderEpis(); break;
         case 'inventario': setTitle('Inventário'); setTopbar(''); await renderInventory(); break;
         case 'inspecao': setTitle('Inspeção 5S'); setTopbar(''); await renderInspecao5S(); break;
         case 'etiquetas': setTitle('Etiquetas'); setTopbar(''); await renderLabels(); break;
@@ -1532,6 +1534,201 @@
         if (!ok2) return;
         try { await api('/api/inspections/' + insp.id, { method: 'DELETE' }); toast('Inspeção excluída.'); closeDrawer(); rerender(); }
         catch (e) { toast(e.message, 'err'); }
+      };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Entrega de EPIs com assinatura digital por link (sem papel)
+  // ---------------------------------------------------------------------------
+  const EPI_STATUS = {
+    pendente: { rotulo: 'Aguardando assinatura', cls: 'warn' },
+    assinado: { rotulo: 'Assinado', cls: 'ok' },
+    cancelado: { rotulo: 'Cancelado', cls: 'na' },
+  };
+  const epiLink = (token) => location.origin + '/assinar.html?t=' + encodeURIComponent(token);
+  async function copiarTexto(texto) {
+    try { await navigator.clipboard.writeText(texto); return true; }
+    catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = texto; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); return true; }
+      catch (e2) { return false; }
+      finally { ta.remove(); }
+    }
+  }
+  function epiZap(entrega) {
+    const texto = 'Olá, ' + entrega.person_name + '! Segue o termo de entrega dos seus EPIs para assinatura digital (abra no celular, confira os itens e assine na tela): ' + epiLink(entrega.token);
+    window.open('https://wa.me/?text=' + encodeURIComponent(texto), '_blank');
+  }
+
+  async function renderEpis() {
+    setTopbar('<button class="btn btn-primary" id="epi-new">+ Nova entrega</button>');
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    const rows = await api('/api/epi');
+    const pend = rows.filter((e) => e.status === 'pendente').length;
+    const ass = rows.filter((e) => e.status === 'assinado').length;
+    view().innerHTML = `
+      <div class="cards">
+        ${statCard('Entregas registradas', rows.length)}
+        ${statCard('Aguardando assinatura', pend, pend ? 'is-warn' : '')}
+        ${statCard('Assinadas', ass, ass ? 'is-accent' : '')}
+      </div>
+      <div class="toolbar"><div class="search"><input id="epi-q" placeholder="Buscar por colaborador ou EPI…"></div></div>
+      <div class="panel"><div id="epi-rows"></div></div>`;
+    $('epi-new').onclick = () => epiForm();
+
+    const draw = () => {
+      const term = ($('epi-q').value || '').toLowerCase();
+      const lista = rows.filter((e) => !term ||
+        (e.person_name || '').toLowerCase().includes(term) ||
+        e.itens.some((it) => (it.nome || '').toLowerCase().includes(term)));
+      $('epi-rows').innerHTML = !lista.length
+        ? '<div class="empty">Nenhuma entrega registrada. Clique em “+ Nova entrega” para gerar o primeiro link de assinatura.</div>'
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Colaborador</th><th>EPIs</th><th>Entrega</th><th>Situação</th><th></th></tr></thead>
+            <tbody>${lista.map((e) => `
+              <tr>
+                <td><div class="cell-title">${escapeHtml(e.person_name)}</div></td>
+                <td>${e.itens.map((it) => escapeHtml(it.quantidade + '× ' + it.nome + (it.ca ? ' (CA ' + it.ca + ')' : ''))).join('<br>')}</td>
+                <td>${escapeHtml(e.created_at)}<div class="muted">por ${escapeHtml(e.entregue_por)}</div></td>
+                <td><span class="s5-chip ${(EPI_STATUS[e.status] || {}).cls || 'na'}">${escapeHtml((EPI_STATUS[e.status] || {}).rotulo || e.status)}</span>
+                  ${e.status === 'assinado' ? `<div class="muted">${escapeHtml(e.assinado_em)}</div>` : ''}</td>
+                <td><div class="row-actions">
+                  ${e.status === 'pendente' ? `
+                    <button class="btn btn-mini btn-ghost" data-copiar="${e.id}">Copiar link</button>
+                    <button class="btn btn-mini btn-ghost" data-zap="${e.id}">WhatsApp</button>` : ''}
+                  <button class="btn btn-mini btn-primary" data-termo="${e.id}">Ver termo</button>
+                </div></td>
+              </tr>`).join('')}</tbody></table></div>`;
+      $('epi-rows').querySelectorAll('[data-copiar]').forEach((b) => {
+        b.onclick = async () => {
+          const e = rows.find((x) => String(x.id) === b.dataset.copiar);
+          toast((await copiarTexto(epiLink(e.token))) ? 'Link copiado — envie ao colaborador.' : 'Não foi possível copiar. Abra “Ver termo” e copie de lá.', undefined);
+        };
+      });
+      $('epi-rows').querySelectorAll('[data-zap]').forEach((b) => {
+        b.onclick = () => epiZap(rows.find((x) => String(x.id) === b.dataset.zap));
+      });
+      $('epi-rows').querySelectorAll('[data-termo]').forEach((b) => {
+        b.onclick = () => epiTermo(b.dataset.termo);
+      });
+    };
+    let deb;
+    $('epi-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 200); });
+    draw();
+  }
+
+  function epiItemRow(v) {
+    return `<div class="epi-item-row">
+      <input class="epi-nome" maxlength="120" placeholder="EPI (ex.: Botina de segurança nº 42)" value="${escapeHtml((v && v.nome) || '')}">
+      <input class="epi-ca" maxlength="30" placeholder="CA" value="${escapeHtml((v && v.ca) || '')}">
+      <input class="epi-qt" type="number" min="1" value="${escapeHtml((v && v.quantidade) || 1)}">
+      <button type="button" class="icon-btn epi-tirar" title="Remover">🗑</button>
+    </div>`;
+  }
+
+  async function epiForm() {
+    const body = openDrawer('Nova entrega de EPI');
+    const pessoas = await ensurePeople(true);
+    if (!pessoas.length) {
+      body.innerHTML = '<div class="empty">Cadastre o colaborador na aba Pessoas antes de registrar a entrega.</div>';
+      return;
+    }
+    body.innerHTML = `
+      <div class="field"><label for="epi-pessoa">Colaborador(a) que recebe *</label>
+        <select id="epi-pessoa">${pessoas.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>EPIs entregues * <span class="muted">(nome, CA e quantidade)</span></label>
+        <div id="epi-itens">${epiItemRow()}</div>
+        <button type="button" class="btn btn-mini btn-ghost" id="epi-mais">+ Adicionar EPI</button></div>
+      <div class="field"><label for="epi-obs">Observações</label>
+        <textarea id="epi-obs" rows="2" placeholder="Ex.: troca por desgaste; primeira entrega…"></textarea></div>
+      <div class="hint">Ao salvar, o sistema gera um link para o colaborador conferir os itens e assinar
+        o recebimento na tela do celular — sem papel. O termo assinado fica arquivado aqui.</div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="epi-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="epi-salvar">Salvar e gerar link</button>
+      </div>`;
+    const ligarRemover = () => body.querySelectorAll('.epi-tirar').forEach((b) => {
+      b.onclick = () => { if (body.querySelectorAll('.epi-item-row').length > 1) b.closest('.epi-item-row').remove(); };
+    });
+    ligarRemover();
+    $('epi-mais').onclick = () => {
+      $('epi-itens').insertAdjacentHTML('beforeend', epiItemRow());
+      ligarRemover();
+    };
+    $('epi-cancelar').onclick = closeDrawer;
+    $('epi-salvar').onclick = async () => {
+      const itens = [...body.querySelectorAll('.epi-item-row')].map((r) => ({
+        nome: r.querySelector('.epi-nome').value.trim(),
+        ca: r.querySelector('.epi-ca').value.trim() || null,
+        quantidade: parseInt(r.querySelector('.epi-qt').value, 10) || 1,
+      })).filter((it) => it.nome);
+      if (!itens.length) { toast('Informe ao menos um EPI.', 'err'); return; }
+      try {
+        const e = await api('/api/epi', {
+          method: 'POST',
+          body: { person_id: $('epi-pessoa').value, itens, obs: $('epi-obs').value.trim() || null },
+        });
+        const link = epiLink(e.token);
+        body.innerHTML = `
+          <div class="okbig">✅ Entrega registrada!</div>
+          <p class="hint">Envie o link abaixo para <b>${escapeHtml(e.person_name)}</b> assinar o recebimento no celular:</p>
+          <div class="epi-linkbox mono" id="epi-link">${escapeHtml(link)}</div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="epi-copiar2">Copiar link</button>
+            <button class="btn btn-ghost" id="epi-zap2">Enviar por WhatsApp</button>
+            <button class="btn btn-ghost" id="epi-fechar2">Fechar</button>
+          </div>`;
+        $('epi-copiar2').onclick = async () => toast((await copiarTexto(link)) ? 'Link copiado.' : 'Selecione e copie o texto do link.');
+        $('epi-zap2').onclick = () => epiZap(e);
+        $('epi-fechar2').onclick = () => { closeDrawer(); rerender(); };
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  async function epiTermo(id) {
+    const e = await api('/api/epi/' + id);
+    const body = openDrawer('Termo de entrega — ' + e.person_name);
+    const st = EPI_STATUS[e.status] || { rotulo: e.status, cls: 'na' };
+    body.innerHTML = `
+      <div class="s5-placar">
+        <span class="s5-chip ${st.cls}">${escapeHtml(st.rotulo)}</span>
+        <div class="muted" style="margin-top:6px">Registrada por ${escapeHtml(e.entregue_por)} em ${escapeHtml(e.created_at)}</div>
+      </div>
+      <div class="field"><label>Equipamentos</label>
+        <div class="table-wrap"><table>
+          <thead><tr><th>EPI</th><th>CA</th><th class="num">Qtde</th></tr></thead>
+          <tbody>${e.itens.map((it) => `<tr><td>${escapeHtml(it.nome)}</td><td>${escapeHtml(it.ca || '—')}</td><td class="num mono">${it.quantidade}</td></tr>`).join('')}</tbody>
+        </table></div></div>
+      ${e.obs ? `<div class="field"><label>Observações</label><div class="hint">${escapeHtml(e.obs)}</div></div>` : ''}
+      ${e.status === 'assinado' ? `
+        <div class="field"><label>Assinatura do recebimento</label>
+          <img class="epi-assin" src="${e.assinatura_png}" alt="Assinatura">
+          <div class="muted" style="margin-top:6px">Assinado por <b>${escapeHtml(e.assinado_nome)}</b>${e.assinado_doc ? ' (doc. ' + escapeHtml(e.assinado_doc) + ')' : ''} em ${escapeHtml(e.assinado_em)}${e.assinado_ip ? ' · IP ' + escapeHtml(e.assinado_ip) : ''}</div>
+        </div>` : ''}
+      ${e.status === 'pendente' ? `
+        <div class="field"><label>Link de assinatura</label>
+          <div class="epi-linkbox mono">${escapeHtml(epiLink(e.token))}</div></div>` : ''}
+      <div class="form-actions">
+        ${e.status === 'pendente' ? `
+          <button class="btn btn-primary" id="epi-copiar3">Copiar link</button>
+          <button class="btn btn-ghost" id="epi-zap3">WhatsApp</button>
+          ${isAdmin() ? '<button class="btn btn-ghost" id="epi-cancelar3">Cancelar entrega</button>' : ''}` : ''}
+        <button class="btn btn-ghost" id="epi-fechar3">Fechar</button>
+      </div>`;
+    $('epi-fechar3').onclick = closeDrawer;
+    const c3 = $('epi-copiar3');
+    if (c3) c3.onclick = async () => toast((await copiarTexto(epiLink(e.token))) ? 'Link copiado.' : 'Selecione e copie o texto do link.');
+    const z3 = $('epi-zap3');
+    if (z3) z3.onclick = () => epiZap(e);
+    const x3 = $('epi-cancelar3');
+    if (x3) {
+      x3.onclick = async () => {
+        const ok2 = await confirmDialog('Cancelar entrega', `Cancelar a entrega de EPIs para “${e.person_name}”? O link deixa de valer.`, 'Cancelar entrega', true);
+        if (!ok2) return;
+        try { await api('/api/epi/' + e.id + '/cancelar', { method: 'POST', body: {} }); toast('Entrega cancelada.'); closeDrawer(); rerender(); }
+        catch (e2) { toast(e2.message, 'err'); }
       };
     }
   }

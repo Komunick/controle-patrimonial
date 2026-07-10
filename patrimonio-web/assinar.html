@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Termo de Entrega de EPI — Brazil Transports</title>
+<style>
+  :root { --verde: #13512E; --verde2: #1C7A45; --ambar: #F9B031; --linha: #DDE3DD; --mudo: #5D6660; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: #F4F6F4; color: #1C2B22; padding: 14px; }
+  .cartao { max-width: 640px; margin: 0 auto; background: #fff; border-radius: 14px; box-shadow: 0 2px 14px rgba(0,0,0,.08); overflow: hidden; }
+  .topo { background: var(--verde); color: #fff; padding: 16px 20px; border-top: 5px solid var(--ambar); }
+  .topo h1 { font-size: 17px; }
+  .topo .sub { font-size: 12.5px; opacity: .85; margin-top: 2px; }
+  .corpo { padding: 18px 20px; }
+  h2 { font-size: 14px; color: var(--verde); margin: 16px 0 8px; text-transform: uppercase; letter-spacing: .4px; }
+  .dado { font-size: 14px; margin: 4px 0; }
+  .dado b { color: var(--verde); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 6px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--linha); }
+  th { font-size: 11.5px; text-transform: uppercase; color: var(--mudo); letter-spacing: .4px; }
+  .decl { font-size: 13px; line-height: 1.55; background: #FBF7EC; border: 1px solid #EBD9A8; border-radius: 10px; padding: 12px 14px; margin-top: 8px; }
+  label { display: block; font-size: 12.5px; font-weight: 700; color: var(--mudo); margin: 14px 0 4px; }
+  input[type=text] { width: 100%; padding: 10px 12px; border: 1px solid var(--linha); border-radius: 10px; font-size: 15px; }
+  .quadro { position: relative; border: 2px dashed var(--verde2); border-radius: 12px; background: #FCFDFC; margin-top: 6px; }
+  canvas { display: block; width: 100%; height: 180px; touch-action: none; border-radius: 10px; }
+  .quadro .dica { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #A8B4AA; font-size: 14px; pointer-events: none; }
+  .limpar { margin-top: 6px; background: none; border: 0; color: var(--verde2); font-weight: 700; font-size: 13px; cursor: pointer; padding: 4px 0; }
+  .aceite { display: flex; gap: 10px; align-items: flex-start; margin: 16px 0 4px; font-size: 13.5px; line-height: 1.4; }
+  .aceite input { width: 20px; height: 20px; margin-top: 1px; }
+  .btn { width: 100%; margin-top: 14px; padding: 14px; border: 0; border-radius: 12px; background: var(--verde2); color: #fff; font-size: 16px; font-weight: 800; cursor: pointer; }
+  .btn:disabled { opacity: .55; }
+  .erro { color: #99331F; background: #FBE7E4; border: 1px solid #EFC4BC; border-radius: 10px; padding: 10px 12px; margin-top: 12px; font-size: 13.5px; display: none; }
+  .okbox { text-align: center; padding: 36px 20px; }
+  .okbox .icone { font-size: 46px; }
+  .okbox h2 { text-transform: none; font-size: 18px; margin-top: 10px; }
+  .okbox p { color: var(--mudo); font-size: 14px; margin-top: 6px; }
+  .rodape { text-align: center; color: var(--mudo); font-size: 11.5px; padding: 14px; }
+</style>
+</head>
+<body>
+  <div class="cartao">
+    <div class="topo">
+      <h1>Termo de Responsabilidade e Entrega de EPI</h1>
+      <div class="sub" id="empresa">Brazil Transports</div>
+    </div>
+    <div class="corpo" id="corpo">
+      <div class="dado" style="color:var(--mudo)">Carregando o termo…</div>
+    </div>
+  </div>
+  <div class="rodape">Documento eletrônico registrado no Controle Patrimonial — dispensa via em papel.</div>
+
+<script>
+(function () {
+  'use strict';
+  const qs = new URLSearchParams(location.search);
+  const token = qs.get('t') || '';
+  const corpo = document.getElementById('corpo');
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  function telaConcluida(nome, quando) {
+    corpo.innerHTML = '<div class="okbox"><div class="icone">✅</div>' +
+      '<h2>Recebimento confirmado</h2>' +
+      '<p>Assinado por <b>' + esc(nome) + '</b> em ' + esc(quando) + '.</p>' +
+      '<p>O termo ficou arquivado no sistema — você não precisa guardar nada em papel.</p></div>';
+  }
+
+  function telaErro(msg) {
+    corpo.innerHTML = '<div class="okbox"><div class="icone">⚠️</div><h2>' + esc(msg) + '</h2></div>';
+  }
+
+  async function carregar() {
+    if (!token) return telaErro('Link incompleto. Peça um novo link a quem enviou.');
+    let r, j;
+    try {
+      r = await fetch('/api/epi/termo?token=' + encodeURIComponent(token));
+      j = await r.json();
+    } catch (e) { return telaErro('Sem conexão com o servidor. Tente de novo em instantes.'); }
+    if (!r.ok) return telaErro(j && j.error ? j.error : 'Termo não encontrado.');
+    if (j.status === 'assinado') return telaConcluida(j.assinado_nome, j.assinado_em);
+    if (j.status === 'cancelado') return telaErro('Esta entrega foi cancelada. Procure quem enviou o link.');
+    document.getElementById('empresa').textContent = j.company || 'Brazil Transports';
+
+    corpo.innerHTML =
+      '<div class="dado"><b>Colaborador(a):</b> ' + esc(j.person_name) + '</div>' +
+      '<div class="dado"><b>Entregue por:</b> ' + esc(j.entregue_por) + ' em ' + esc(j.created_at) + '</div>' +
+      '<h2>Equipamentos entregues</h2>' +
+      '<table><thead><tr><th>EPI</th><th>CA</th><th>Qtde</th></tr></thead><tbody>' +
+      j.itens.map((it) => '<tr><td>' + esc(it.nome) + '</td><td>' + esc(it.ca || '—') + '</td><td>' + esc(it.quantidade) + '</td></tr>').join('') +
+      '</tbody></table>' +
+      (j.obs ? '<div class="dado" style="margin-top:8px"><b>Observações:</b> ' + esc(j.obs) + '</div>' : '') +
+      '<h2>Declaração</h2>' +
+      '<div class="decl">Declaro que recebi da empresa <b>' + esc(j.company) + '</b>, gratuitamente, os equipamentos de proteção individual (EPIs) relacionados acima, novos e em perfeitas condições de uso, e que fui orientado(a) quanto ao uso correto, guarda e conservação. Comprometo-me a: usá-los apenas para a finalidade a que se destinam; responsabilizar-me pela guarda e conservação; comunicar qualquer alteração que os torne impróprios para uso; e devolvê-los quando solicitado ou no meu desligamento. Estou ciente de que o descumprimento constitui ato faltoso, nos termos da NR-6.</div>' +
+      '<label for="nome">Seu nome completo *</label>' +
+      '<input type="text" id="nome" maxlength="80" value="' + esc(j.person_name) + '">' +
+      '<label for="doc">CPF (opcional)</label>' +
+      '<input type="text" id="doc" maxlength="20" inputmode="numeric" placeholder="000.000.000-00">' +
+      '<label>Assine no quadro abaixo *</label>' +
+      '<div class="quadro"><canvas id="pad"></canvas><div class="dica" id="dica">Assine aqui com o dedo ou o mouse</div></div>' +
+      '<button type="button" class="limpar" id="limpar">↺ Limpar assinatura</button>' +
+      '<div class="aceite"><input type="checkbox" id="concordo"><span>Li e concordo com a declaração acima e confirmo o recebimento dos EPIs relacionados.</span></div>' +
+      '<div class="erro" id="erro"></div>' +
+      '<button class="btn" id="confirmar">Assinar e confirmar o recebimento</button>';
+
+    // ---- quadro de assinatura (mouse + toque) ----
+    const canvas = document.getElementById('pad');
+    const dica = document.getElementById('dica');
+    const ctx = canvas.getContext('2d');
+    let desenhou = false;
+    let tracando = false;
+    function ajustar() {
+      const escala = window.devicePixelRatio || 1;
+      const r2 = canvas.getBoundingClientRect();
+      canvas.width = Math.round(r2.width * escala);
+      canvas.height = Math.round(180 * escala);
+      ctx.scale(escala, escala);
+      ctx.lineWidth = 2.4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#13512E';
+    }
+    ajustar();
+    const pos = (ev) => {
+      const r2 = canvas.getBoundingClientRect();
+      const p = ev.touches ? ev.touches[0] : ev;
+      return { x: p.clientX - r2.left, y: p.clientY - r2.top };
+    };
+    const comecar = (ev) => {
+      ev.preventDefault();
+      tracando = true;
+      desenhou = true;
+      dica.style.display = 'none';
+      const p = pos(ev);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+    };
+    const mover = (ev) => {
+      if (!tracando) return;
+      ev.preventDefault();
+      const p = pos(ev);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    };
+    const parar = () => { tracando = false; };
+    canvas.addEventListener('mousedown', comecar);
+    canvas.addEventListener('mousemove', mover);
+    window.addEventListener('mouseup', parar);
+    canvas.addEventListener('touchstart', comecar, { passive: false });
+    canvas.addEventListener('touchmove', mover, { passive: false });
+    canvas.addEventListener('touchend', parar);
+    document.getElementById('limpar').onclick = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      desenhou = false;
+      dica.style.display = 'flex';
+    };
+
+    // ---- envio ----
+    const erroBox = document.getElementById('erro');
+    const mostrarErro = (m) => { erroBox.textContent = m; erroBox.style.display = 'block'; };
+    document.getElementById('confirmar').onclick = async () => {
+      erroBox.style.display = 'none';
+      const nome = document.getElementById('nome').value.trim();
+      if (!nome) return mostrarErro('Escreva o seu nome completo.');
+      if (!desenhou) return mostrarErro('Assine no quadro antes de confirmar.');
+      if (!document.getElementById('concordo').checked) return mostrarErro('Marque a caixa "Li e concordo" para confirmar.');
+      const btn = document.getElementById('confirmar');
+      btn.disabled = true;
+      btn.textContent = 'Enviando…';
+      try {
+        const r2 = await fetch('/api/epi/assinar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token,
+            nome,
+            documento: document.getElementById('doc').value.trim() || null,
+            concordo: true,
+            assinatura_png: canvas.toDataURL('image/png'),
+          }),
+        });
+        const j2 = await r2.json();
+        if (!r2.ok) throw new Error(j2 && j2.error ? j2.error : 'Não foi possível registrar. Tente novamente.');
+        telaConcluida(j2.assinado_nome || nome, j2.assinado_em);
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Assinar e confirmar o recebimento';
+        mostrarErro(e.message);
+      }
+    };
+  }
+  carregar();
+})();
+</script>
+</body>
+</html>

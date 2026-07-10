@@ -16,6 +16,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const crypto = require('crypto');
 
 const STORE_JS = path.join(__dirname, '..', 'store.js');
 const STORAGE_KEY = 'patrimonio.db.v1'; // chave única usada pelo store.js
@@ -136,6 +137,8 @@ const sandbox = {
   localStorage: localStorageShim,
   URLSearchParams,
   console,
+  // aleatoriedade forte para tokens de links públicos (termo de EPI)
+  __randomHex: (n) => crypto.randomBytes(n).toString('hex'),
 };
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(STORE_JS, 'utf8'), sandbox, { filename: 'store.js' });
