@@ -691,6 +691,7 @@
         const e2 = t && DB.epi_entregas.find((x) => x.token === t);
         if (!e2) return fail(404, 'Termo não encontrado. Confira o link com quem o enviou.');
         return ok({
+          id: e2.id,
           company: DB.settings.company,
           person_name: e2.person_name,
           itens: e2.itens,
@@ -718,6 +719,7 @@
         if (png.length < 2000) return fail(400, 'Assinatura muito curta. Assine no quadro antes de confirmar.');
         if (png.length > 400000) return fail(400, 'Assinatura grande demais. Limpe o quadro e assine de novo.');
         e2.status = 'assinado';
+        e2.assinado_via = 'digital';
         e2.assinado_em = nowLocal();
         e2.assinado_nome = nome;
         e2.assinado_doc = String(body.documento || '').trim().slice(0, 20) || null;
@@ -739,6 +741,7 @@
               itens: e2.itens, obs: e2.obs || null, entregue_por: e2.entregue_por,
               created_at: e2.created_at, status: e2.status,
               assinado_em: e2.assinado_em || null, assinado_nome: e2.assinado_nome || null,
+              assinado_via: e2.assinado_via || null,
             }));
           return ok(rows);
         }
@@ -796,6 +799,24 @@
       const cur = DB.epi_entregas.find((x) => String(x.id) === String(sub));
       if (!cur) return fail(404, 'Entrega não encontrada');
       if (method === 'GET') return ok(cur);
+      // Confirmação por PDF assinado (o arquivo em si é gravado pelo servidor;
+      // aqui entra só o registro na entrega).
+      if (seg[3] === 'confirmar-pdf' && method === 'POST') {
+        if (cur.status === 'assinado') return fail(409, 'Esta entrega já está assinada.');
+        if (cur.status === 'cancelado') return fail(400, 'Entrega cancelada não pode ser confirmada.');
+        const arquivo = String(body.arquivo || '').trim();
+        if (!arquivo) return fail(400, 'Arquivo do PDF assinado não informado.');
+        cur.status = 'assinado';
+        cur.assinado_via = 'pdf';
+        cur.assinado_em = nowLocal();
+        cur.assinado_nome = String(body.assinado_nome || '').trim().slice(0, 80) || cur.person_name;
+        cur.pdf_arquivo = arquivo.slice(0, 200);
+        cur.pdf_nome_original = String(body.nome_original || '').trim().slice(0, 160) || null;
+        audit(actor, 'assinar', 'epi', cur.id, cur.person_name,
+          'Entrega confirmada com PDF assinado anexado (' + (cur.pdf_nome_original || cur.pdf_arquivo) + ')');
+        persist();
+        return ok(cur);
+      }
       if (seg[3] === 'cancelar' && method === 'POST') {
         const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
         if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem cancelar entregas.');
