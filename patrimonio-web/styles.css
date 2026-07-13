@@ -729,6 +729,7 @@ textarea.insp-texto { max-width: 100%; resize: vertical; }
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   margin-bottom: 10px; font-size: 13.5px;
 }
+.rel-baixar { width: 100%; margin: 0 0 10px; border-style: dashed; }
 
 /* ---------- Entrega de EPIs (assinatura digital por link) ---------- */
 .epi-item-row { display: grid; grid-template-columns: 1fr 84px 64px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }

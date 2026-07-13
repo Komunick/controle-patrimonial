@@ -1876,6 +1876,34 @@
     drawPagina(true);
   }
 
+  // Baixa a planilha Excel (com gráficos) gerada pelo servidor. Download por
+  // blob, como no PDF de EPI: evita o alerta de download do Chrome em HTTP.
+  async function baixarPlanilhaInspecoes(btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch('/api/inspections/relatorio-xlsx', {
+        headers: { 'X-Operator': encodeURIComponent(state.operator || '') },
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        throw new Error((j && j.error) || 'Não foi possível gerar a planilha.');
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const hoje = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      a.href = url;
+      a.download = `relatorio-inspecoes-${hoje.getFullYear()}-${p(hoje.getMonth() + 1)}-${p(hoje.getDate())}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      toast('Planilha gerada — confira os downloads.');
+    } catch (e) { toast(e.message, 'err'); }
+    finally { if (btn) btn.disabled = false; }
+  }
+
   // Relatório semanal: resumo das inspeções concluídas na semana (segunda a
   // domingo) — data, quem inspecionou, pontuação de cada uma e a média da semana.
   function relatorioSemanal(inspecoes) {
@@ -1918,6 +1946,7 @@
             <strong>Média semanal: ${media == null ? '—' : chip5s(classifDe(media), media)}</strong>
           </div>
         </div>
+        <button class="btn btn-ghost rel-baixar" id="rel-baixar">⬇ Baixar planilha (Excel) com gráficos — todas as semanas</button>
         ${daSemana.length ? daSemana.map((i) => `
           <div class="s5-hist" data-id="${i.id}">
             <div class="s5-hist-topo">
@@ -1931,6 +1960,7 @@
       $('rel-ant').onclick = () => { ref.setDate(ref.getDate() - 7); draw(); };
       const prox = $('rel-prox');
       if (prox && !prox.disabled) prox.onclick = () => { ref.setDate(ref.getDate() + 7); draw(); };
+      $('rel-baixar').onclick = () => baixarPlanilhaInspecoes($('rel-baixar'));
       // clicar numa linha abre o detalhe completo daquela inspeção
       body.querySelectorAll('.s5-hist').forEach((d) => {
         d.onclick = () => {
