@@ -419,9 +419,10 @@ const fmtDataBr = (iso) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || '');
 };
 
-// Monta o workbook: aba "Inspeções" (uma linha por inspeção concluída, com
-// gráfico de pontuações) e aba "Resumo semanal" (média por semana, com gráfico).
-function gerarRelatorioXlsx(concluidas) {
+// Monta o workbook: "Inspeções" (uma linha por inspeção concluída, com gráfico),
+// "Resumo semanal" (média por semana, com gráfico), "Locais" (situação da última
+// inspeção de cada local, com gráfico) e "Pendências" (respostas "Não" por local).
+function gerarRelatorioXlsx(concluidas, rooms) {
   const isoDia = (d) => {
     const p = (n) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -474,6 +475,76 @@ function gerarRelatorioXlsx(concluidas) {
     { v: 'Média geral' }, { t: 'n', v: todas.length }, { t: 'n', v: mediaGeral },
   ]));
 
+  // --- aba 3: situação por local (última inspeção de cada um) ---
+  // Responde direto "quais locais estão em dia e quais não": pontuação geral,
+  // situação da limpeza (só perguntas de limpeza) e nº de respostas "Não".
+  const ehNao = (it) => it.resp === 'nao' || it.resp === 'nao_conforme';
+  const itensLimpeza = (insp) => (insp.items || []).filter((it) =>
+    (!it.tipo || it.tipo === 'sim_nao') && String(it.cat || '').toLowerCase().includes('limpeza'));
+  const porLocal = new Map(); // chave: room_id (ou nome) → última inspeção concluída
+  for (const i of concluidas) { // já vem em ordem crescente: a última sobrescreve
+    const chave = i.room_id != null ? 'id:' + i.room_id : 'nome:' + String(i.room_name || '').toLowerCase();
+    if (i.room_name) porLocal.set(chave, i);
+  }
+  const locais = [];
+  for (const [, ult] of porLocal) {
+    const limp = itensLimpeza(ult);
+    const pendLimp = limp.filter(ehNao).length;
+    locais.push({
+      nome: ult.room_name,
+      data: fmtDataHoraBr(ult.concluida_em || ult.created_at),
+      modelo: ult.template_nome || 'Inspeção 5S',
+      inspetor: ult.inspector || '—',
+      score: typeof ult.score === 'number' ? ult.score : null,
+      limpeza: limp.length ? (pendLimp ? `${pendLimp} pendência${pendLimp === 1 ? '' : 's'}` : 'Em dia') : '—',
+      situacao: CLASSIF_ROTULO[ult.classificacao] || ult.classificacao || '',
+      naos: (ult.items || []).filter((it) => (!it.tipo || it.tipo === 'sim_nao') && ehNao(it)).length,
+      insp: ult,
+    });
+  }
+  locais.sort((a, b) => (a.score == null ? 999 : a.score) - (b.score == null ? 999 : b.score)); // pior primeiro
+  // locais cadastrados que nunca foram inspecionados entram no fim da lista
+  const nomesComInspecao = new Set(locais.map((l) => String(l.nome).toLowerCase()));
+  for (const r of (rooms || [])) {
+    if (nomesComInspecao.has(String(r.name).toLowerCase())) continue;
+    locais.push({ nome: r.name, data: 'Nunca inspecionado', modelo: '', inspetor: '', score: null, limpeza: '—', situacao: '', naos: '', insp: null });
+  }
+  const cab3 = ['Local', 'Última inspeção', 'Modelo', 'Inspetor', 'Pontuação (%)', 'Limpeza', 'Situação', 'Respostas "Não"'];
+  const linhas3 = [linhaXlsx(1, cab3.map((v) => ({ v })))];
+  locais.forEach((l, idx) => {
+    linhas3.push(linhaXlsx(idx + 2, [
+      { v: l.nome },
+      { v: l.data },
+      { v: l.modelo },
+      { v: l.inspetor },
+      { t: 'n', v: l.score == null ? '' : l.score },
+      { v: l.limpeza },
+      { v: l.situacao },
+      { t: 'n', v: l.naos === '' ? '' : l.naos },
+    ]));
+  });
+  const locaisComScore = locais.filter((l) => l.score != null).length;
+
+  // --- aba 4: pendências (cada resposta "Não" da última inspeção por local) ---
+  const cab4 = ['Local', 'Data da inspeção', 'Seção', 'Item com problema', 'Observação do inspetor', 'Inspetor'];
+  const linhas4 = [linhaXlsx(1, cab4.map((v) => ({ v })))];
+  let l4 = 2;
+  for (const l of locais) {
+    if (!l.insp) continue;
+    for (const it of (l.insp.items || [])) {
+      if ((it.tipo && it.tipo !== 'sim_nao') || !ehNao(it)) continue;
+      linhas4.push(linhaXlsx(l4++, [
+        { v: l.nome },
+        { v: l.data },
+        { v: it.cat || '' },
+        { v: it.item || '' },
+        { v: it.obs || '' },
+        { v: l.inspetor },
+      ]));
+    }
+  }
+  if (l4 === 2) linhas4.push(linhaXlsx(2, [{ v: 'Nenhuma pendência — todos os locais em dia na última inspeção. 🎉' }]));
+
   const XMLNS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
   const relsFolha = (rid) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${XMLNS_REL}/drawing" Target="../drawings/drawing${rid}.xml"/></Relationships>`;
@@ -489,34 +560,46 @@ function gerarRelatorioXlsx(concluidas) {
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
 <Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+<Override PartName="/xl/worksheets/sheet4.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
 <Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>
 <Override PartName="/xl/drawings/drawing2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>
+<Override PartName="/xl/drawings/drawing3.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>
 <Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>
 <Override PartName="/xl/charts/chart2.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>
+<Override PartName="/xl/charts/chart3.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>
 </Types>` },
     { nome: '_rels/.rels', xml: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${XMLNS_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>` },
     { nome: 'xl/workbook.xml', xml: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${XMLNS_REL}"><sheets><sheet name="Inspeções" sheetId="1" r:id="rId1"/><sheet name="Resumo semanal" sheetId="2" r:id="rId2"/></sheets></workbook>` },
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${XMLNS_REL}"><sheets><sheet name="Inspeções" sheetId="1" r:id="rId1"/><sheet name="Resumo semanal" sheetId="2" r:id="rId2"/><sheet name="Locais" sheetId="3" r:id="rId4"/><sheet name="Pendências" sheetId="4" r:id="rId5"/></sheets></workbook>` },
     { nome: 'xl/_rels/workbook.xml.rels', xml: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 <Relationship Id="rId1" Type="${XMLNS_REL}/worksheet" Target="worksheets/sheet1.xml"/>
 <Relationship Id="rId2" Type="${XMLNS_REL}/worksheet" Target="worksheets/sheet2.xml"/>
 <Relationship Id="rId3" Type="${XMLNS_REL}/styles" Target="styles.xml"/>
+<Relationship Id="rId4" Type="${XMLNS_REL}/worksheet" Target="worksheets/sheet3.xml"/>
+<Relationship Id="rId5" Type="${XMLNS_REL}/worksheet" Target="worksheets/sheet4.xml"/>
 </Relationships>` },
     { nome: 'xl/styles.xml', xml: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="1"><xf/></cellXfs></styleSheet>` },
     { nome: 'xl/worksheets/sheet1.xml', xml: folhaXlsx(linhas1, [18, 26, 22, 20, 14, 16, 6, 6, 6], true) },
     { nome: 'xl/worksheets/sheet2.xml', xml: folhaXlsx(linhas2, [24, 11, 11], true) },
+    { nome: 'xl/worksheets/sheet3.xml', xml: folhaXlsx(linhas3, [24, 18, 26, 20, 14, 16, 16, 14], true) },
+    { nome: 'xl/worksheets/sheet4.xml', xml: folhaXlsx(linhas4, [24, 18, 28, 44, 36, 20], false) },
     { nome: 'xl/worksheets/_rels/sheet1.xml.rels', xml: relsFolha(1) },
     { nome: 'xl/worksheets/_rels/sheet2.xml.rels', xml: relsFolha(2) },
-    // gráfico 1 ao lado da tabela de inspeções; gráfico 2 abaixo do resumo
+    { nome: 'xl/worksheets/_rels/sheet3.xml.rels', xml: relsFolha(3) },
+    // gráfico 1 ao lado das inspeções; 2 ao lado do resumo; 3 ao lado dos locais
     { nome: 'xl/drawings/drawing1.xml', xml: desenhoXlsx(10, 1, 20, 21) },
     { nome: 'xl/drawings/drawing2.xml', xml: desenhoXlsx(4, 1, 14, 21) },
+    { nome: 'xl/drawings/drawing3.xml', xml: desenhoXlsx(9, 1, 19, 21) },
     { nome: 'xl/drawings/_rels/drawing1.xml.rels', xml: relsDesenho(1) },
     { nome: 'xl/drawings/_rels/drawing2.xml.rels', xml: relsDesenho(2) },
+    { nome: 'xl/drawings/_rels/drawing3.xml.rels', xml: relsDesenho(3) },
     { nome: 'xl/charts/chart1.xml', xml: graficoXlsx('Pontuação por inspeção (%)', 'Inspeções', 'A', 'E', 2, concluidas.length + 1, '1C7A45') },
     { nome: 'xl/charts/chart2.xml', xml: graficoXlsx('Média semanal (%)', 'Resumo semanal', 'A', 'C', 2, chavesSemana.length + 1, '2563EB') },
+    { nome: 'xl/charts/chart3.xml', xml: graficoXlsx('Última inspeção por local (%)', 'Locais', 'A', 'E', 2, locaisComScore + 1, 'C2710C') },
   ];
   return ziparPartes(partes);
 }
@@ -633,7 +716,8 @@ function handleApi(req, res) {
           .filter((i) => (i.status || 'concluida') === 'concluida')
           .sort((a, b) => String(a.concluida_em || a.created_at).localeCompare(String(b.concluida_em || b.created_at)));
         if (!concluidas.length) return sendJson(res, 400, { error: 'Nenhuma inspeção concluída para exportar.' });
-        const xlsx = gerarRelatorioXlsx(concluidas);
+        const rr = db.request('GET', '/api/rooms', {}, operator);
+        const xlsx = gerarRelatorioXlsx(concluidas, rr.ok ? rr.data : []);
         return send(res, 200, xlsx, {
           'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'X-Content-Type-Options': 'nosniff',
