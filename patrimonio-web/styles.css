@@ -733,7 +733,17 @@ textarea.insp-texto { max-width: 100%; resize: vertical; }
 
 /* ---------- Entrega de EPIs (assinatura digital por link) ---------- */
 .epi-item-row { display: grid; grid-template-columns: 1fr 84px 64px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
-.epi-item-row input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 13px; background: var(--surface); color: inherit; }
+.epi-item-row input, .epi-item-row select { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 13px; background: var(--surface); color: inherit; min-width: 0; }
+.epi-item-bloco { margin-bottom: 8px; }
+.epi-item-bloco .epi-item-row { margin-bottom: 4px; }
+.epi-nome-outro {
+  width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+  font-size: 13px; background: var(--surface); color: inherit; margin-bottom: 4px;
+}
+.epi-estoque { margin: 0; font-size: 11.5px; min-height: 0; }
+
+/* ---------- Relação de materiais (estoque) ---------- */
+.mat-qtd { font-size: 15px; font-weight: 800; }
 .epi-linkbox { border: 1px dashed var(--accent); border-radius: 10px; padding: 10px 12px; font-size: 12px; word-break: break-all; background: var(--accent-soft, #F0FAF6); user-select: all; }
 [data-tema="escuro"] .epi-linkbox { background: #1D3226; }
 .epi-assin { width: 100%; max-width: 420px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }

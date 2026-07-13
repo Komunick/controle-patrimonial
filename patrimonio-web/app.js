@@ -270,6 +270,7 @@
     { seg: 'salas', label: 'Locais', ico: '⌂' },
     { seg: 'homeoffice', label: 'Home Office', ico: '⇄' },
     { seg: 'epis', label: 'EPIs', ico: '⛑' },
+    { seg: 'materiais', label: 'Materiais', ico: '▤' },
     { sep: true },
     { seg: 'inventario', label: 'Inventário', ico: '☑' },
     { seg: 'inspecao', label: 'Inspeção 5S', ico: '✦' },
@@ -324,6 +325,7 @@
         case 'salas': setTitle('Locais'); await renderRooms(); break;
         case 'homeoffice': setTitle('Home Office'); await renderHomeOffice(); break;
         case 'epis': setTitle('Entrega de EPIs'); await renderEpis(); break;
+        case 'materiais': setTitle('Relação de materiais'); await renderMateriais(); break;
         case 'inventario': setTitle('Inventário'); setTopbar(''); await renderInventory(); break;
         case 'inspecao':
           setTitle('Inspeção 5S');
@@ -2038,6 +2040,144 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Relação de materiais — estoque de EPIs e itens de uso (nome + quantidade).
+  // A entrega de EPI dá baixa automática quando o nome bate com um material.
+  // ---------------------------------------------------------------------------
+  async function renderMateriais() {
+    setTopbar('<button class="btn btn-primary" id="mat-new">+ Novo material</button>');
+    $('mat-new').onclick = () => materialForm();
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    const materiais = await api('/api/materiais');
+    const unidades = materiais.reduce((s, m) => s + (m.quantidade || 0), 0);
+    const baixos = materiais.filter((m) => m.minimo != null && m.quantidade <= m.minimo);
+
+    view().innerHTML = `
+      <div class="cards">
+        ${statCard('Materiais cadastrados', materiais.length)}
+        ${statCard('Unidades em estoque', unidades, 'is-accent')}
+        ${statCard('Abaixo do mínimo', baixos.length, baixos.length ? 'is-warn' : '')}
+      </div>
+      <div class="toolbar"><div class="search"><input id="mat-q" placeholder="Buscar material…"></div></div>
+      <div class="panel"><div id="mat-rows"></div></div>`;
+
+    const draw = () => {
+      const term = ($('mat-q').value || '').toLowerCase();
+      const rows = materiais.filter((m) => !term || String(m.nome).toLowerCase().includes(term));
+      $('mat-rows').innerHTML = !rows.length
+        ? `<div class="empty">${materiais.length ? 'Nenhum material para esta busca.' : 'Nenhum material ainda. Clique em “+ Novo material” para montar o estoque.'}</div>`
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Material</th><th class="num">Em estoque</th><th class="num">Mínimo</th><th>Atualizado</th><th></th></tr></thead>
+            <tbody>${rows.map((m) => {
+              const baixo = m.minimo != null && m.quantidade <= m.minimo;
+              return `<tr>
+                <td><div class="cell-title">${escapeHtml(m.nome)}</div>
+                    ${baixo ? '<span class="s5-chip warn">Abaixo do mínimo</span>' : ''}</td>
+                <td class="num mono mat-qtd">${m.quantidade}</td>
+                <td class="num mono">${m.minimo == null ? '—' : m.minimo}</td>
+                <td>${fmtDateTime(m.updated_at || m.created_at)}</td>
+                <td><div class="row-actions">
+                  <button class="btn btn-mini btn-primary" data-entrada="${m.id}">+ Entrada</button>
+                  <button class="btn btn-mini btn-ghost" data-saida="${m.id}">− Saída</button>
+                  <button class="btn btn-mini btn-ghost" data-editar="${m.id}">Editar</button>
+                  ${isAdmin() ? `<button class="btn btn-mini btn-ghost" data-excluir="${m.id}" title="Excluir material">🗑</button>` : ''}
+                </div></td>
+              </tr>`;
+            }).join('')}</tbody></table></div>`;
+      const porId = (idStr) => materiais.find((m) => String(m.id) === idStr);
+      $('mat-rows').querySelectorAll('[data-entrada]').forEach((b) => {
+        b.onclick = () => { const m = porId(b.dataset.entrada); if (m) ajusteMaterial(m, +1); };
+      });
+      $('mat-rows').querySelectorAll('[data-saida]').forEach((b) => {
+        b.onclick = () => { const m = porId(b.dataset.saida); if (m) ajusteMaterial(m, -1); };
+      });
+      $('mat-rows').querySelectorAll('[data-editar]').forEach((b) => {
+        b.onclick = () => { const m = porId(b.dataset.editar); if (m) materialForm(m); };
+      });
+      $('mat-rows').querySelectorAll('[data-excluir]').forEach((b) => {
+        b.onclick = async () => {
+          const m = porId(b.dataset.excluir);
+          if (!m) return;
+          const ok2 = await confirmDialog('Excluir material',
+            `Excluir “${m.nome}” da relação de materiais? O estoque atual (${m.quantidade} un.) será perdido do registro.`,
+            'Excluir', true);
+          if (!ok2) return;
+          try { await api('/api/materiais/' + m.id, { method: 'DELETE' }); toast('Material excluído.'); rerender(); }
+          catch (e) { toast(e.message, 'err'); }
+        };
+      });
+    };
+    let deb;
+    $('mat-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 200); });
+    draw();
+  }
+
+  function materialForm(m) {
+    const body = openDrawer(m ? 'Editar material — ' + m.nome : 'Novo material');
+    const sugestoes = state.catalog.epiItems || [];
+    body.innerHTML = `
+      <div class="field"><label for="mat-nome">Nome do material *</label>
+        <input id="mat-nome" maxlength="120" list="mat-sugestoes" value="${escapeHtml(m ? m.nome : '')}"
+          placeholder="Ex.: Botina de segurança (bico de aço)">
+        <datalist id="mat-sugestoes">${sugestoes.map((n) => `<option value="${escapeHtml(n)}">`).join('')}</datalist>
+        <div class="hint">Use o mesmo nome da lista de EPIs para a entrega dar baixa automática no estoque.</div></div>
+      ${m ? '' : `<div class="field"><label for="mat-qtd">Quantidade inicial em estoque</label>
+        <input id="mat-qtd" type="number" min="0" value="0"></div>`}
+      <div class="field"><label for="mat-min">Estoque mínimo <span class="muted">(avisa quando chegar nesse número — opcional)</span></label>
+        <input id="mat-min" type="number" min="0" value="${m && m.minimo != null ? m.minimo : ''}"></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="mat-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="mat-salvar">${m ? 'Salvar' : 'Cadastrar'}</button>
+      </div>`;
+    setTimeout(() => { const c = $('mat-nome'); if (c) c.focus(); }, 50);
+    $('mat-cancelar').onclick = closeDrawer;
+    $('mat-salvar').onclick = async () => {
+      const nome = $('mat-nome').value.trim();
+      if (!nome) { toast('Informe o nome do material.', 'err'); return; }
+      const minimo = $('mat-min').value === '' ? null : parseInt($('mat-min').value, 10) || 0;
+      try {
+        if (m) {
+          await api('/api/materiais/' + m.id, { method: 'PUT', body: { nome, minimo } });
+          toast('Material atualizado.');
+        } else {
+          await api('/api/materiais', { method: 'POST', body: { nome, minimo, quantidade: parseInt($('mat-qtd').value, 10) || 0 } });
+          toast('Material cadastrado.');
+        }
+        closeDrawer();
+        rerender();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  function ajusteMaterial(m, sinal) {
+    const body = openDrawer(`${sinal > 0 ? 'Entrada de estoque' : 'Saída de estoque'} — ${m.nome}`);
+    body.innerHTML = `
+      <div class="s5-placar">Em estoque agora: <strong>${m.quantidade}</strong> unidade(s)</div>
+      <div class="field"><label for="aj-qtd">Quantidade que ${sinal > 0 ? 'entra' : 'sai'} *</label>
+        <input id="aj-qtd" type="number" min="1" value="1"></div>
+      <div class="field"><label for="aj-motivo">Motivo</label>
+        <input id="aj-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234' : 'Ex.: perda; descarte; uso interno'}"></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="aj-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="aj-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
+      </div>`;
+    setTimeout(() => { const c = $('aj-qtd'); if (c) { c.focus(); c.select(); } }, 50);
+    $('aj-cancelar').onclick = closeDrawer;
+    $('aj-salvar').onclick = async () => {
+      const qtd = parseInt($('aj-qtd').value, 10) || 0;
+      if (qtd < 1) { toast('Informe uma quantidade maior que zero.', 'err'); return; }
+      try {
+        const r = await api(`/api/materiais/${m.id}/ajuste`, {
+          method: 'POST',
+          body: { delta: sinal * qtd, motivo: $('aj-motivo').value.trim() || null },
+        });
+        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada — estoque de “${r.nome}”: ${r.quantidade} un.`);
+        closeDrawer();
+        rerender();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Entrega de EPIs com assinatura digital por link (sem papel)
   // ---------------------------------------------------------------------------
   const EPI_STATUS = {
@@ -2144,71 +2284,128 @@
     draw();
   }
 
+  // Linha de item da entrega: EPI escolhido numa lista suspensa (catálogo) —
+  // "Outro (digitar)…" abre um campo livre. Mostra o estoque quando o item
+  // existe na Relação de materiais.
   function epiItemRow(v) {
-    return `<div class="epi-item-row">
-      <input class="epi-nome" maxlength="120" placeholder="EPI (ex.: Botina de segurança nº 42)" value="${escapeHtml((v && v.nome) || '')}">
-      <input class="epi-ca" maxlength="30" placeholder="CA" value="${escapeHtml((v && v.ca) || '')}">
-      <input class="epi-qt" type="number" min="1" value="${escapeHtml((v && v.quantidade) || 1)}">
-      <button type="button" class="icon-btn epi-tirar" title="Remover">🗑</button>
+    const nome = (v && v.nome) || '';
+    const itens = state.catalog.epiItems || [];
+    const conhecido = !nome || itens.includes(nome);
+    return `<div class="epi-item-bloco">
+      <div class="epi-item-row">
+        <select class="epi-nome-sel">
+          <option value="">Escolha o EPI…</option>
+          ${itens.map((n) => `<option value="${escapeHtml(n)}"${n === nome ? ' selected' : ''}>${escapeHtml(n)}</option>`).join('')}
+          <option value="__outro"${nome && !conhecido ? ' selected' : ''}>✎ Outro (digitar)…</option>
+        </select>
+        <input class="epi-ca" maxlength="30" placeholder="CA" value="${escapeHtml((v && v.ca) || '')}">
+        <input class="epi-qt" type="number" min="1" value="${escapeHtml((v && v.quantidade) || 1)}">
+        <button type="button" class="icon-btn epi-tirar" title="Remover">🗑</button>
+      </div>
+      <input class="epi-nome-outro${nome && !conhecido ? '' : ' oculta5s'}" maxlength="120"
+        placeholder="Escreva o nome do EPI…" value="${nome && !conhecido ? escapeHtml(nome) : ''}">
+      <div class="hint epi-estoque"></div>
     </div>`;
   }
 
   async function epiForm() {
     const body = openDrawer('Nova entrega de EPI');
     const pessoas = await ensurePeople(true).catch(() => []);
+    const materiais = await api('/api/materiais').catch(() => []);
+    const estoqueDe = (nome) => materiais.find((m) => String(m.nome).trim().toLowerCase() === String(nome).trim().toLowerCase());
     body.innerHTML = `
-      <div class="field"><label for="epi-pessoa">Colaborador(a) que recebe *</label>
-        <input id="epi-pessoa" maxlength="80" list="epi-pessoas-list"
-          placeholder="Escreva o nome (ou escolha do cadastro)">
-        <datalist id="epi-pessoas-list">${pessoas.map((p) => `<option value="${escapeHtml(p.name)}">`).join('')}</datalist>
-        <div class="hint">Pode escrever qualquer nome — não precisa estar no cadastro de Pessoas.</div></div>
-      <div class="field"><label>EPIs entregues * <span class="muted">(nome, CA e quantidade)</span></label>
+      <div class="field"><label for="epi-pessoa-sel">Colaborador(a) que recebe *</label>
+        <select id="epi-pessoa-sel">
+          <option value="">Escolha o colaborador…</option>
+          ${pessoas.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}${p.department ? ' · ' + escapeHtml(p.department) : ''}</option>`).join('')}
+          <option value="__outro">✎ Outro (digitar)…</option>
+        </select>
+        <input id="epi-pessoa" class="oculta5s" maxlength="80" placeholder="Escreva o nome completo…" style="margin-top:6px">
+        <div class="hint">A lista vem do cadastro de Pessoas. Não achou? Escolha “Outro” e digite.</div></div>
+      <div class="field"><label>EPIs entregues * <span class="muted">(item, CA e quantidade)</span></label>
         <div id="epi-itens">${epiItemRow()}</div>
         <button type="button" class="btn btn-mini btn-ghost" id="epi-mais">+ Adicionar EPI</button></div>
       <div class="field"><label for="epi-obs">Observações</label>
         <textarea id="epi-obs" rows="2" placeholder="Ex.: troca por desgaste; primeira entrega…"></textarea></div>
-      <div class="hint">Ao salvar, o sistema gera o termo em PDF ("termo-epi-NOME.pdf") com a logo da empresa.
+      <div class="hint">Ao salvar, o sistema gera o termo em PDF ("termo-epi-NOME.pdf") com a logo da empresa
+        e dá baixa automática na Relação de materiais (itens com o mesmo nome).
         Envie ao colaborador, receba o PDF assinado de volta e anexe aqui — a entrega é confirmada
         e o termo fica arquivado no sistema, sem papel.</div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="epi-cancelar">Cancelar</button>
         <button class="btn btn-primary" id="epi-salvar">Salvar e gerar PDF</button>
       </div>`;
-    const ligarRemover = () => body.querySelectorAll('.epi-tirar').forEach((b) => {
-      b.onclick = () => { if (body.querySelectorAll('.epi-item-row').length > 1) b.closest('.epi-item-row').remove(); };
-    });
-    ligarRemover();
-    // Enter pula para o próximo campo; no último, salva e já gera o PDF.
+    const ligarItens = () => {
+      body.querySelectorAll('.epi-tirar').forEach((b) => {
+        b.onclick = () => { if (body.querySelectorAll('.epi-item-bloco').length > 1) b.closest('.epi-item-bloco').remove(); };
+      });
+      body.querySelectorAll('.epi-nome-sel').forEach((sel) => {
+        const bloco = sel.closest('.epi-item-bloco');
+        const outro = bloco.querySelector('.epi-nome-outro');
+        const dica = bloco.querySelector('.epi-estoque');
+        const atualizar = () => {
+          const eOutro = sel.value === '__outro';
+          outro.classList.toggle('oculta5s', !eOutro);
+          const nome = eOutro ? outro.value.trim() : sel.value;
+          const mat = nome ? estoqueDe(nome) : null;
+          dica.textContent = mat ? `Em estoque: ${mat.quantidade} unidade(s)` : '';
+          if (eOutro && sel === document.activeElement) outro.focus();
+        };
+        sel.onchange = atualizar;
+        outro.oninput = atualizar;
+        atualizar();
+      });
+    };
+    ligarItens();
+    const selPessoa = $('epi-pessoa-sel');
+    selPessoa.onchange = () => {
+      const eOutro = selPessoa.value === '__outro';
+      $('epi-pessoa').classList.toggle('oculta5s', !eOutro);
+      if (eOutro) $('epi-pessoa').focus();
+    };
+    // Enter pula para o próximo campo visível; no último, salva e já gera o PDF.
     body.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;
       const alvo = ev.target;
-      if (!alvo.matches || !alvo.matches('#epi-pessoa, .epi-nome, .epi-ca, .epi-qt')) return;
+      if (!alvo.matches || !alvo.matches('#epi-pessoa-sel, #epi-pessoa, .epi-nome-sel, .epi-nome-outro, .epi-ca, .epi-qt')) return;
       ev.preventDefault();
-      const campos = [...body.querySelectorAll('#epi-pessoa, .epi-nome, .epi-ca, .epi-qt')];
+      const campos = [...body.querySelectorAll('#epi-pessoa-sel, #epi-pessoa, .epi-nome-sel, .epi-nome-outro, .epi-ca, .epi-qt')]
+        .filter((c) => !c.classList.contains('oculta5s'));
       const prox = campos[campos.indexOf(alvo) + 1];
       if (prox) { prox.focus(); if (prox.select) prox.select(); }
       else $('epi-salvar').click();
     });
-    setTimeout(() => { const c = $('epi-pessoa'); if (c) c.focus(); }, 50);
+    setTimeout(() => { selPessoa.focus(); }, 50);
     $('epi-mais').onclick = () => {
       $('epi-itens').insertAdjacentHTML('beforeend', epiItemRow());
-      ligarRemover();
+      ligarItens();
     };
     $('epi-cancelar').onclick = closeDrawer;
     $('epi-salvar').onclick = async () => {
-      const itens = [...body.querySelectorAll('.epi-item-row')].map((r) => ({
-        nome: r.querySelector('.epi-nome').value.trim(),
-        ca: r.querySelector('.epi-ca').value.trim() || null,
-        quantidade: parseInt(r.querySelector('.epi-qt').value, 10) || 1,
-      })).filter((it) => it.nome);
-      const nomePessoa = $('epi-pessoa').value.trim();
-      if (!nomePessoa) { toast('Escreva o nome de quem recebe os EPIs.', 'err'); return; }
-      if (!itens.length) { toast('Informe ao menos um EPI.', 'err'); return; }
+      const itens = [...body.querySelectorAll('.epi-item-bloco')].map((r) => {
+        const sel = r.querySelector('.epi-nome-sel').value;
+        return {
+          nome: sel === '__outro' ? r.querySelector('.epi-nome-outro').value.trim() : sel,
+          ca: r.querySelector('.epi-ca').value.trim() || null,
+          quantidade: parseInt(r.querySelector('.epi-qt').value, 10) || 1,
+        };
+      }).filter((it) => it.nome);
+      const corpo = { itens, obs: $('epi-obs').value.trim() || null };
+      if (selPessoa.value === '__outro') {
+        corpo.person_name = $('epi-pessoa').value.trim();
+        if (!corpo.person_name) { toast('Escreva o nome de quem recebe os EPIs.', 'err'); return; }
+      } else if (selPessoa.value) {
+        corpo.person_id = selPessoa.value;
+      } else {
+        toast('Escolha o colaborador que recebe os EPIs.', 'err');
+        return;
+      }
+      if (!itens.length) { toast('Escolha ao menos um EPI da lista.', 'err'); return; }
       try {
-        const e = await api('/api/epi', {
-          method: 'POST',
-          body: { person_name: nomePessoa, itens, obs: $('epi-obs').value.trim() || null },
-        });
+        const e = await api('/api/epi', { method: 'POST', body: corpo });
+        if (e.estoque_avisos && e.estoque_avisos.length) {
+          toast('Atenção ao estoque: ' + e.estoque_avisos.join(' '), 'err');
+        }
         body.innerHTML = `
           <div class="okbig">✅ Entrega registrada!</div>
           <p class="hint">Baixe o termo em PDF e envie para <b>${escapeHtml(e.person_name)}</b> assinar

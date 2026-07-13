@@ -43,6 +43,35 @@
       { key: 'ruim', label: 'Ruim' },
       { key: 'descartado', label: 'Descartado' },
     ],
+    // EPIs comuns — alimentam a lista suspensa da entrega e as sugestões da
+    // Relação de materiais (dá para escolher "Outro" e digitar um nome novo).
+    epiItems: [
+      'Avental de raspa',
+      'Bota de borracha (cano longo)',
+      'Botina de segurança (bico composite)',
+      'Botina de segurança (bico de aço)',
+      'Calça com faixa refletiva',
+      'Capa de chuva',
+      'Capacete de segurança com jugular',
+      'Cinto de segurança tipo paraquedista',
+      'Colete refletivo',
+      'Creme protetor solar FPS 30',
+      'Luva de malha pigmentada',
+      'Luva de raspa',
+      'Luva de vaqueta',
+      'Luva nitrílica',
+      'Mangote de raspa',
+      'Máscara PFF1',
+      'Máscara PFF2',
+      'Óculos de proteção escuro',
+      'Óculos de proteção incolor',
+      'Perneira de raspa',
+      'Protetor auricular plug de silicone',
+      'Protetor auricular tipo concha',
+      'Respirador semifacial com filtros',
+      'Talabarte duplo com absorvedor de energia',
+      'Touca árabe',
+    ],
     peripheralTypes: [
       // Entrada
       { key: 'teclado', label: 'Teclado' },
@@ -318,7 +347,7 @@
   function ensureShape() {
     const e = emptyDB();
     if (!DB || typeof DB !== 'object') { DB = e; return; }
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais']) {
       if (!Array.isArray(DB[k])) DB[k] = [];
     }
     if (!DB.seq || typeof DB.seq !== 'object') DB.seq = e.seq;
@@ -338,7 +367,7 @@
     if (!('started_at' in DB.inventory)) DB.inventory.started_at = null;
     if (!('started_by' in DB.inventory)) DB.inventory.started_by = null;
     // recalcula contadores a partir do maior id existente (robustez)
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais']) {
       const arr = Array.isArray(DB[k]) ? DB[k] : [];
       let max = 0;
       for (const row of arr) if (row && typeof row.id === 'number' && row.id > max) max = row.id;
@@ -1021,6 +1050,77 @@
     }
 
     // --- entrega de EPIs com assinatura digital por link (sem papel) ---
+    // --- relação de materiais (estoque de EPIs e itens de uso) ---
+    if (r1 === 'materiais') {
+      const id = seg[2];
+      if (!id) {
+        if (method === 'GET') {
+          const rows = DB.materiais.slice()
+            .sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR', { sensitivity: 'base' }));
+          return ok(rows);
+        }
+        if (method === 'POST') {
+          const nome = String(body.nome || '').trim().slice(0, 120);
+          if (!nome) return fail(400, 'Informe o nome do material.');
+          if (DB.materiais.some((m) => String(m.nome).trim().toLowerCase() === nome.toLowerCase())) {
+            return fail(409, 'Já existe um material com esse nome.');
+          }
+          const quantidade = Math.max(0, parseInt(body.quantidade, 10) || 0);
+          const minimo = body.minimo == null || body.minimo === '' ? null : Math.max(0, parseInt(body.minimo, 10) || 0);
+          const nid = nextId('materiais');
+          const row = { id: nid, nome, quantidade, minimo, created_at: nowLocal(), updated_at: nowLocal() };
+          DB.materiais.push(row);
+          audit(actor, 'criar', 'material', nid, nome, `Material cadastrado — ${quantidade} un. em estoque`);
+          persist();
+          return ok(row, 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+      const cur = DB.materiais.find((m) => String(m.id) === String(id));
+      if (!cur) return fail(404, 'Material não encontrado');
+      if (method === 'GET') return ok(cur);
+      if (method === 'PUT') {
+        if (has(body, 'nome')) {
+          const nome = String(body.nome || '').trim().slice(0, 120);
+          if (!nome) return fail(400, 'Informe o nome do material.');
+          if (DB.materiais.some((m) => m.id !== cur.id && String(m.nome).trim().toLowerCase() === nome.toLowerCase())) {
+            return fail(409, 'Já existe um material com esse nome.');
+          }
+          cur.nome = nome;
+        }
+        if (has(body, 'minimo')) {
+          cur.minimo = body.minimo == null || body.minimo === '' ? null : Math.max(0, parseInt(body.minimo, 10) || 0);
+        }
+        cur.updated_at = nowLocal();
+        audit(actor, 'editar', 'material', cur.id, cur.nome, 'Material atualizado');
+        persist();
+        return ok(cur);
+      }
+      // Entrada (delta positivo) ou saída (delta negativo) manual de estoque.
+      if (seg[3] === 'ajuste' && method === 'POST') {
+        const delta = parseInt(body.delta, 10);
+        if (!delta) return fail(400, 'Informe a quantidade (entrada positiva, saída negativa).');
+        const novo = cur.quantidade + delta;
+        if (novo < 0) return fail(400, `Só há ${cur.quantidade} unidade(s) de “${cur.nome}” em estoque.`);
+        cur.quantidade = novo;
+        cur.updated_at = nowLocal();
+        const motivo = body.motivo ? ' — ' + String(body.motivo).slice(0, 200) : '';
+        audit(actor, delta > 0 ? 'entrada' : 'saida', 'material', cur.id, cur.nome,
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} un. (estoque: ${novo})${motivo}`);
+        persist();
+        return ok(cur);
+      }
+      if (method === 'DELETE') {
+        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
+        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem excluir materiais.');
+        DB.materiais = DB.materiais.filter((m) => m !== cur);
+        audit(actor, 'excluir', 'material', cur.id, cur.nome, `Material excluído (estoque: ${cur.quantidade})`);
+        persist();
+        return ok({ ok: true });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
     if (r1 === 'epi') {
       const sub = seg[2];
 
@@ -1109,6 +1209,23 @@
             });
           }
           if (!itens.length) return fail(400, 'Informe ao menos um EPI (nome do equipamento; CA e quantidade se tiver).');
+          // Baixa automática: item com o mesmo nome na Relação de materiais
+          // tem a quantidade entregue descontada do estoque.
+          const baixas = [];
+          const avisos = [];
+          for (const it of itens) {
+            const mat = DB.materiais.find((m) => String(m.nome).trim().toLowerCase() === it.nome.toLowerCase());
+            if (!mat) continue;
+            const baixa = Math.min(mat.quantidade, it.quantidade);
+            if (baixa > 0) {
+              mat.quantidade -= baixa;
+              mat.updated_at = nowLocal();
+              baixas.push({ material_id: mat.id, nome: mat.nome, qtd: baixa });
+            }
+            if (baixa < it.quantidade) {
+              avisos.push(`“${mat.nome}”: havia ${baixa} de ${it.quantidade} em estoque (agora zerado).`);
+            }
+          }
           // Token do link: aleatoriedade forte no servidor; reserva no navegador.
           const token = (typeof __randomHex === 'function')
             ? __randomHex(20)
@@ -1118,6 +1235,7 @@
             id: nid, token,
             person_id: p ? p.id : null, person_name: personName,
             itens,
+            baixas, // o que saiu do estoque (para estornar se a entrega for cancelada)
             obs: body.obs ? String(body.obs).slice(0, 300) : null,
             entregue_por: actor,
             created_at: nowLocal(),
@@ -1128,8 +1246,12 @@
           DB.epi_entregas.push(row);
           audit(actor, 'criar', 'epi', nid, personName,
             'Entrega de EPI (' + itens.length + ' item(ns)) — aguardando assinatura');
+          for (const b of baixas) {
+            audit(actor, 'saida', 'material', b.material_id, b.nome,
+              `Saída de ${b.qtd} un. — entrega de EPI para ${personName}`);
+          }
           persist();
-          return ok(row, 201);
+          return ok(Object.assign({}, row, { estoque_avisos: avisos }), 201);
         }
         return fail(404, 'Rota não encontrada');
       }
@@ -1160,7 +1282,17 @@
         const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
         if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem cancelar entregas.');
         if (cur.status === 'assinado') return fail(400, 'Termo já assinado não pode ser cancelado.');
+        if (cur.status === 'cancelado') return fail(400, 'Esta entrega já foi cancelada.');
         cur.status = 'cancelado';
+        // Devolve ao estoque o que havia sido baixado na criação da entrega.
+        for (const b of (Array.isArray(cur.baixas) ? cur.baixas : [])) {
+          const mat = DB.materiais.find((m) => String(m.id) === String(b.material_id));
+          if (!mat) continue;
+          mat.quantidade += b.qtd;
+          mat.updated_at = nowLocal();
+          audit(actor, 'entrada', 'material', mat.id, mat.nome,
+            `Estorno de ${b.qtd} un. — entrega de EPI para ${cur.person_name} cancelada`);
+        }
         audit(actor, 'cancelar', 'epi', cur.id, cur.person_name, 'Entrega de EPI cancelada');
         persist();
         return ok(cur);
