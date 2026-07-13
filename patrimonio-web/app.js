@@ -1244,8 +1244,10 @@
 
   // Iniciais do modelo para o avatar da lista (ex.: "5S - Auditoria…" → "5A").
   function inspIniciais(nome) {
-    const palavras = String(nome || '').split(/[^A-Za-zÀ-ÿ0-9]+/).filter(Boolean);
-    return (palavras.slice(0, 2).map((w) => w[0]).join('') || '5S').toUpperCase();
+    const todas = String(nome || '').split(/[^A-Za-zÀ-ÿ0-9]+/).filter(Boolean);
+    // ignora conectivos curtos ("de", "e") para iniciais mais legíveis
+    const palavras = todas.filter((w) => w.length > 2 || /\d/.test(w));
+    return ((palavras.length ? palavras : todas).slice(0, 2).map((w) => w[0]).join('') || '5S').toUpperCase();
   }
 
   // Agrupa o histórico por dia, como no SafetyCulture (HOJE / ONTEM / data).
@@ -1655,14 +1657,17 @@
         corpo = `${fotosHtml(q.id, true)}
           <button type="button" class="insp-foto-add" data-foto-add="${q.id}">🖼 Adicionar mídia</button>`;
       }
-      const notaAberta = !!r.obs || notasAbertas.has(q.id);
+      // Perguntas SIM/NÃO têm o campo de observação sempre visível; nas de
+      // texto ele fica atrás do link "Adicionar anotação" (o campo principal
+      // já é um texto livre).
+      const notaAberta = tipo === 'sim_nao' || !!r.obs || notasAbertas.has(q.id);
       const rodape = tipo === 'foto' ? '' : `
         <div class="insp-q-links">
           <button type="button" class="s5-nota-link" data-nota="${q.id}"${notaAberta ? ' hidden' : ''}>✎ Adicionar anotação</button>
           <button type="button" class="s5-nota-link" data-foto-add="${q.id}">📷 Anexar mídia</button>
         </div>
         <input class="s5-obs${notaAberta ? '' : ' oculta5s'}" data-obs="${q.id}" maxlength="300"
-          placeholder="${r.resp === 'nao' && !r.obs ? 'O que está errado? (recomendado)' : 'Escreva a anotação…'}" value="${escapeHtml(r.obs || '')}">
+          placeholder="${r.resp === 'nao' && !r.obs ? 'O que está errado? (recomendado)' : 'Observação (opcional)…'}" value="${escapeHtml(r.obs || '')}">
         ${fotosHtml(q.id, true)}`;
       const marca = (tipo === 'sim_nao' && q.obrigatorio) || (tipo === 'texto' && (q.obrigatorio || (q.condicional === 'se_nao' && haNao())));
       return `<div class="s5-q${pende ? ' pende' : ''}" data-qcard="${q.id}" data-tipo="${tipo}">
