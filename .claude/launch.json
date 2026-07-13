@@ -2,10 +2,22 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "patrimonio-dev",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["C:\\Users\\brazil\\AppData\\Local\\Temp\\claude\\C--Users-brazil-Downloads-controle-patrimonial-web-2\\8d400a98-b192-46fc-8617-0dbe9b521b1d\\scratchpad\\dev-server.js"],
+      "port": 8081
+    },
+    {
       "name": "chamados",
       "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
       "runtimeArgs": ["C:\\Users\\brazil\\Sistema-chamados\\chamados-web\\server\\server.js"],
       "port": 8090
+    },
+    {
+      "name": "chamados-ti",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["C:\\Users\\brazil\\Sistema-chamados-ti\\ti-web\\server\\server.js"],
+      "port": 8085
     }
   ]
 }
