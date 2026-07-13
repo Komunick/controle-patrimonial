@@ -532,6 +532,103 @@
   }
 
   // ===========================================================================
+  // Modelos de inspeção — fluxo copiado do SafetyCulture: a tela inicial mostra
+  // só o histórico e toda inspeção nova nasce de um modelo, preenchido em
+  // páginas com perguntas SIM / NÃO / N/A, anotações e fotos de evidência.
+  // ===========================================================================
+  // Tipos de pergunta: sim_nao (padrão) · texto · foto.
+  // Campos do cabeçalho (página 1): local · turno · data · texto.
+  const q5 = (id, texto) => ({ id, texto, tipo: 'sim_nao', obrigatorio: true });
+  const qFoto = (id) => ({ id, texto: 'Anexe foto da evidência.', tipo: 'foto' });
+
+  const CABECALHO_5S = [
+    { id: 'c_local', rotulo: 'Local inspecionado', tipo: 'local', obrigatorio: true },
+    { id: 'c_turno', rotulo: 'Turno', tipo: 'turno', obrigatorio: true },
+    { id: 'c_lideranca', rotulo: 'Liderança do setor', tipo: 'texto' },
+    { id: 'c_cargo', rotulo: 'Cargo', tipo: 'texto' },
+    { id: 'c_data', rotulo: 'Data', tipo: 'data', obrigatorio: true },
+    { id: 'c_inspetor', rotulo: 'Inspecionado por quem?', tipo: 'texto', obrigatorio: true },
+  ];
+
+  const MODELOS_INSPECAO = [
+    {
+      key: '5s_escritorio',
+      nome: '5S - Auditoria de Escritório',
+      descricao: 'Auditoria 5S do escritório — limpeza, organização, copa, segurança e disciplina, com fotos de evidência.',
+      paginas: [
+        { titulo: 'Inspeção 5S - Brazil Transports', tipo: 'cabecalho', campos: CABECALHO_5S },
+        { titulo: 'Limpeza', perguntas: [
+          q5('p2_q1', 'Chão limpo?'),
+          q5('p2_q2', 'Lixo recolhido da sala?'),
+          q5('p2_q3', 'Mesa limpa e organizada?'),
+          q5('p2_q4', 'Equipamentos limpos e sem poeira?'),
+          q5('p2_q5', 'Lixeiras em bom estado e sem excesso de resíduos?'),
+          qFoto('p2_foto'),
+        ] },
+        { titulo: 'Organização / Utilização', perguntas: [
+          q5('p3_q1', 'Somente itens necessários sobre a mesa?'),
+          q5('p3_q2', 'Documentos organizados e identificados?'),
+          q5('p3_q3', 'Gavetas organizadas?'),
+          q5('p3_q4', 'Armários identificados e organizados?'),
+          q5('p3_q5', 'Cabos e fios organizados?'),
+          qFoto('p3_foto'),
+        ] },
+        { titulo: 'Limpeza / Organização — Copa', perguntas: [
+          q5('p4_q1', 'Copa limpa e organizada?'),
+          q5('p4_q2', 'Pia sem louça suja?'),
+          q5('p4_q3', 'Vasilhas guardadas após o uso?'),
+          q5('p4_q4', 'Geladeira limpa e organizada?'),
+          q5('p4_q5', 'Alimentos vencidos foram descartados?'),
+          q5('p4_q6', 'Armários organizados?'),
+          qFoto('p4_foto'),
+        ] },
+        { titulo: 'Segurança', perguntas: [
+          q5('p5_q1', 'Corredores livres de obstruções?'),
+          q5('p5_q2', 'Extintores com acesso livre?'),
+          q5('p5_q3', 'Saídas de emergência desobstruídas?'),
+          q5('p5_q4', 'Materiais armazenados de forma segura?'),
+          qFoto('p5_foto'),
+        ] },
+        { titulo: 'Disciplina', perguntas: [
+          q5('p6_q1', 'Normas de organização estão sendo cumpridas?'),
+          q5('p6_q2', 'Não conformidades anteriores foram corrigidas?'),
+          q5('p6_q3', 'O setor mantém o padrão 5S estabelecido?'),
+          { id: 'p6_nc', texto: 'Descreva a não conformidade.', tipo: 'texto', condicional: 'se_nao',
+            dica: 'Obrigatório quando alguma resposta for “Não”.' },
+          qFoto('p6_foto'),
+        ] },
+      ],
+    },
+  ];
+
+  const tplPorKey = (k) => MODELOS_INSPECAO.find((t) => t.key === String(k)) || null;
+
+  // Índice id → definição da pergunta (para validar respostas e conclusão).
+  function tplPerguntas(tpl) {
+    const map = {};
+    for (const p of tpl.paginas) {
+      for (const c of (p.campos || [])) {
+        map[c.id] = { tipo: c.tipo, obrigatorio: !!c.obrigatorio, texto: c.rotulo, pagina: p.titulo, cabecalho: true };
+      }
+      for (const qq of (p.perguntas || [])) {
+        map[qq.id] = { tipo: qq.tipo || 'sim_nao', obrigatorio: !!qq.obrigatorio, condicional: qq.condicional || null, texto: qq.texto, pagina: p.titulo };
+      }
+    }
+    return map;
+  }
+
+  const classif5s = (score) => (score >= 90 ? 'excelente' : score >= 70 ? 'organizado' : score >= 50 ? 'desorganizado' : 'critico');
+
+  // Resposta uniforme: inspeções antigas (antes dos modelos) não têm status.
+  function inspView(row) {
+    const v = Object.assign({}, row);
+    if (!v.status) v.status = 'concluida';
+    if (!v.template_nome) v.template_nome = 'Inspeção 5S';
+    if (!v.concluida_em && v.status === 'concluida') v.concluida_em = v.created_at;
+    return v;
+  }
+
+  // ===========================================================================
   // Roteador — imita as rotas /api/* do servidor Express
   // ===========================================================================
   const ok = (data, status) => ({ ok: true, status: status || 200, data: data == null ? null : data });
@@ -594,7 +691,12 @@
       return fail(404, 'Rota não encontrada');
     }
 
-    // --- inspeções 5S (checklist detalhado por local) ---
+    // --- modelos de inspeção (fluxo estilo SafetyCulture) ---
+    if (r1 === 'inspection-templates' && method === 'GET') {
+      return ok(MODELOS_INSPECAO);
+    }
+
+    // --- inspeções 5S: rascunho ("em andamento") → preenchimento → conclusão ---
     if (r1 === 'inspections') {
       const id = seg[2];
       if (!id) {
@@ -605,14 +707,36 @@
           rows.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || (b.id - a.id));
           const lim = parseInt(query.limit, 10);
           if (lim > 0) rows = rows.slice(0, lim);
-          return ok(rows);
+          return ok(rows.map(inspView));
         }
         if (method === 'POST') {
           const b = body || {};
+          // Fluxo atual: "Iniciar inspeção" cria um rascunho a partir de um modelo.
+          if (b.template_key) {
+            const tpl = tplPorKey(b.template_key);
+            if (!tpl) return fail(400, 'Modelo de inspeção não encontrado.');
+            const nid = nextId('inspections');
+            const row = {
+              id: nid,
+              template_key: tpl.key,
+              template_nome: tpl.nome,
+              status: 'em_andamento',
+              inspector: actor || 'Operador',
+              room_id: null,
+              room_name: null,
+              respostas: {},
+              fotos: {},
+              created_at: nowLocal(),
+              updated_at: nowLocal(),
+            };
+            DB.inspections.push(row);
+            audit(actor, 'criar', 'inspection', nid, tpl.nome, 'Inspeção iniciada');
+            persist();
+            return ok(inspView(row), 201);
+          }
+          // Formato antigo (compatibilidade): questionário completo numa chamada.
           const room = DB.rooms.find((r) => String(r.id) === String(b.room_id));
           if (!room) return fail(400, 'Local não encontrado. Selecione um local cadastrado.');
-          // Formato atual: sim / nao / na (questionário). Aceita também os
-          // valores do formato antigo (conforme/parcial/nao_conforme).
           const RESPOSTAS = ['sim', 'nao', 'na', 'conforme', 'parcial', 'nao_conforme'];
           const brutos = Array.isArray(b.items) ? b.items : [];
           if (!brutos.length) return fail(400, 'A inspeção precisa do questionário preenchido.');
@@ -638,13 +762,11 @@
           }
           if (!validos) return fail(400, 'Responda ao menos uma pergunta aplicável (não deixe tudo como N/A).');
           const score = Math.round((pontos / (validos * 2)) * 100);
-          const classificacao = score >= 90 ? 'excelente'
-            : score >= 70 ? 'organizado'
-            : score >= 50 ? 'desorganizado'
-            : 'critico';
+          const classificacao = classif5s(score);
           const nid = nextId('inspections');
           const row = {
             id: nid,
+            status: 'concluida',
             room_id: room.id,
             room_name: room.name, // retrato do nome do local na data da inspeção
             inspector: actor || 'Operador',
@@ -658,6 +780,7 @@
             nao_conformes: items.filter((i) => i.resp === 'nao' || i.resp === 'nao_conforme').length,
             nao_aplicaveis: items.filter((i) => i.resp === 'na').length,
             created_at: nowLocal(),
+            concluida_em: nowLocal(),
           };
           DB.inspections.push(row);
           audit(actor, 'criar', 'inspection', nid, room.name, `Inspeção 5S — ${score}% (${classificacao})`);
@@ -668,15 +791,193 @@
       }
       const cur = DB.inspections.find((i) => String(i.id) === String(id));
       if (!cur) return fail(404, 'Inspeção não encontrada');
-      if (method === 'GET') return ok(cur);
-      if (method === 'DELETE') {
-        // exclusão restrita a administradores ativos
-        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
-        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem excluir inspeções.');
-        DB.inspections = DB.inspections.filter((i) => i !== cur);
-        audit(actor, 'excluir', 'inspection', cur.id, cur.room_name, `Inspeção 5S de ${cur.created_at} (${cur.score}%)`);
+      const status = cur.status || 'concluida'; // dados antigos não têm status
+      // Rascunho só pode ser alterado por quem o iniciou (ou por um admin).
+      const opInsp = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
+      const adminInsp = !!(opInsp && opInsp.role === 'admin');
+      const donoOuAdmin = adminInsp || cur.inspector === actor;
+      if (method === 'GET' && !seg[3]) return ok(inspView(cur));
+
+      // Salvar respostas do rascunho (autosave do formulário paginado).
+      if (method === 'PUT' && !seg[3]) {
+        if (status !== 'em_andamento') return fail(400, 'Esta inspeção já foi concluída.');
+        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou um administrador) pode editá-la.');
+        // Trava otimista: se outra sessão salvou depois do snapshot deste
+        // cliente, rejeita para ninguém apagar as respostas do outro.
+        if (body && body.base_updated_at != null && String(body.base_updated_at) !== String(cur.updated_at)) {
+          return fail(409, 'Este rascunho foi alterado em outra sessão. Recarregue para continuar.');
+        }
+        const tpl = tplPorKey(cur.template_key);
+        if (!tpl) return fail(400, 'Modelo de inspeção não encontrado.');
+        const defs = tplPerguntas(tpl);
+        const brutas = (body && body.respostas && typeof body.respostas === 'object') ? body.respostas : {};
+        const limpas = {};
+        for (const qid of Object.keys(brutas)) {
+          const def = defs[qid];
+          const r = brutas[qid];
+          if (!def || !r || typeof r !== 'object') continue; // ignora perguntas fora do modelo
+          const e = {};
+          if (def.tipo === 'sim_nao') {
+            const resp = String(r.resp || '');
+            if (resp === 'sim' || resp === 'nao' || resp === 'na') e.resp = resp;
+          } else if (r.v != null && String(r.v).trim()) {
+            e.v = String(r.v).slice(0, 500);
+          }
+          if (r.obs != null && String(r.obs).trim()) e.obs = String(r.obs).slice(0, 300);
+          if (Object.keys(e).length) limpas[qid] = e;
+        }
+        cur.respostas = limpas;
+        cur.updated_at = nowLocal();
         persist();
-        return ok({ ok: true });
+        return ok(inspView(cur));
+      }
+
+      // Concluir: valida obrigatórios, calcula pontuação e congela o resultado.
+      if (seg[3] === 'concluir' && method === 'POST') {
+        if (status !== 'em_andamento') return fail(400, 'Esta inspeção já foi concluída.');
+        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou um administrador) pode concluí-la.');
+        const tpl = tplPorKey(cur.template_key);
+        if (!tpl) return fail(400, 'Modelo de inspeção não encontrado.');
+        const defs = tplPerguntas(tpl);
+        const resp = (cur.respostas && typeof cur.respostas === 'object') ? cur.respostas : {};
+        const temNao = Object.keys(resp).some((qid) => defs[qid] && defs[qid].tipo === 'sim_nao' && resp[qid].resp === 'nao');
+        const pendentes = [];
+        for (const qid of Object.keys(defs)) {
+          const def = defs[qid];
+          const r = resp[qid] || {};
+          if (def.tipo === 'foto') continue; // foto é evidência, nunca trava a conclusão
+          const obrigatoria = def.obrigatorio || (def.condicional === 'se_nao' && temNao);
+          if (!obrigatoria) continue;
+          const respondida = def.tipo === 'sim_nao' ? !!r.resp : !!(r.v && String(r.v).trim());
+          if (!respondida) pendentes.push(def);
+        }
+        if (pendentes.length) {
+          return fail(400, `Há ${pendentes.length} pergunta(s) obrigatória(s) sem resposta — ex.: “${pendentes[0].texto}” (${pendentes[0].pagina}).`);
+        }
+        const localQid = Object.keys(defs).find((k) => defs[k].tipo === 'local');
+        const room = localQid ? DB.rooms.find((x) => String(x.id) === String((resp[localQid] || {}).v)) : null;
+        if (localQid && defs[localQid].obrigatorio && !room) {
+          return fail(400, 'Local não encontrado. Selecione um local cadastrado.');
+        }
+        // Pontuação no padrão SafetyCulture: Sim = 1 ponto; N/A fora da conta.
+        let sims = 0;
+        let validos = 0;
+        const items = [];
+        const paginasScore = [];
+        for (const p of tpl.paginas) {
+          if (!Array.isArray(p.perguntas)) continue;
+          let ps = 0;
+          let pv = 0;
+          for (const q of p.perguntas) {
+            const tipo = q.tipo || 'sim_nao';
+            const r = resp[q.id] || {};
+            if (tipo === 'sim_nao') {
+              items.push({ qid: q.id, cat: p.titulo, item: q.texto, tipo, resp: r.resp || 'na', obs: r.obs || null });
+              if (r.resp === 'sim' || r.resp === 'nao') {
+                pv += 1; validos += 1;
+                if (r.resp === 'sim') { ps += 1; sims += 1; }
+              }
+            } else {
+              items.push({ qid: q.id, cat: p.titulo, item: q.texto, tipo, resp: null, v: r.v || null, obs: r.obs || null });
+            }
+          }
+          paginasScore.push({ titulo: p.titulo, pontos: ps, total: pv, pct: pv ? Math.round((ps / pv) * 100) : null });
+        }
+        if (!validos) return fail(400, 'Responda ao menos uma pergunta aplicável (não deixe tudo como N/A).');
+        const score = Math.round((sims / validos) * 100);
+        // Cabeçalho pronto para exibição (rótulo + valor), na ordem do modelo.
+        const header = [];
+        for (const p of tpl.paginas) {
+          for (const c of (p.campos || [])) {
+            let v = (resp[c.id] || {}).v || null;
+            if (c.tipo === 'local') v = room ? room.name : v;
+            if (c.tipo === 'turno' && v) { const s = CATALOG.shifts.find((x) => x.key === v); v = s ? s.label : v; }
+            header.push({ rotulo: c.rotulo, valor: v });
+          }
+        }
+        cur.status = 'concluida';
+        cur.room_id = room ? room.id : null;
+        cur.room_name = room ? room.name : null;
+        cur.header = header;
+        cur.items = items;
+        cur.paginas_score = paginasScore;
+        cur.score = score;
+        cur.classificacao = classif5s(score);
+        cur.conformes = items.filter((i) => i.resp === 'sim').length;
+        cur.parciais = 0;
+        cur.nao_conformes = items.filter((i) => i.resp === 'nao').length;
+        cur.nao_aplicaveis = items.filter((i) => i.tipo === 'sim_nao' && i.resp === 'na').length;
+        cur.concluida_em = nowLocal();
+        cur.updated_at = cur.concluida_em;
+        audit(actor, 'criar', 'inspection', cur.id, cur.room_name || cur.template_nome,
+          `Inspeção 5S — ${score}% (${cur.classificacao})${cur.room_name ? ' · ' + cur.room_name : ''}`);
+        persist();
+        return ok(inspView(cur));
+      }
+
+      // Metadados das fotos de evidência (o arquivo em si fica no servidor).
+      if (seg[3] === 'fotos') {
+        if (status !== 'em_andamento') return fail(400, 'Fotos só podem ser alteradas com a inspeção em andamento.');
+        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou um administrador) pode alterar as fotos.');
+        const tpl = tplPorKey(cur.template_key);
+        const defs = tpl ? tplPerguntas(tpl) : {};
+        const qid = String((body && body.question_id) || '');
+        if (!defs[qid]) return fail(400, 'Pergunta não encontrada no modelo.');
+        if (!cur.fotos || typeof cur.fotos !== 'object') cur.fotos = {};
+        if (method === 'POST') {
+          const arq = String((body && body.arquivo) || '');
+          // O nome precisa pertencer a ESTA inspeção — impede registrar (e depois
+          // apagar do disco) a foto de outra inspeção.
+          if (!arq.startsWith('insp-' + cur.id + '-') || !/^insp-\d+-[A-Za-z0-9_.-]+\.(jpg|jpeg|png|webp)$/.test(arq)) {
+            return fail(400, 'Arquivo inválido.');
+          }
+          const arr = cur.fotos[qid] = Array.isArray(cur.fotos[qid]) ? cur.fotos[qid] : [];
+          const total = Object.keys(cur.fotos).reduce((s, k) => s + (Array.isArray(cur.fotos[k]) ? cur.fotos[k].length : 0), 0);
+          if (arr.length >= 10 || total >= 40) return fail(400, 'Limite de fotos atingido (10 por pergunta, 40 por inspeção).');
+          arr.push({ arquivo: arq, nome: body && body.nome ? String(body.nome).slice(0, 120) : null });
+          cur.updated_at = nowLocal();
+          persist();
+          return ok({ fotos: cur.fotos, updated_at: cur.updated_at });
+        }
+        if (method === 'DELETE') {
+          const arq = String((body && body.arquivo) || '');
+          const arr = Array.isArray(cur.fotos[qid]) ? cur.fotos[qid] : [];
+          const restante = arr.filter((f) => f.arquivo !== arq);
+          if (restante.length === arr.length) return fail(404, 'Foto não encontrada.');
+          if (restante.length) cur.fotos[qid] = restante; else delete cur.fotos[qid];
+          cur.updated_at = nowLocal();
+          persist();
+          return ok({ fotos: cur.fotos, arquivo: arq, updated_at: cur.updated_at });
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+
+      if (method === 'DELETE') {
+        // Admin exclui qualquer inspeção; o próprio inspetor pode descartar
+        // um rascunho seu que ainda está em andamento.
+        const admin = adminInsp;
+        const donoDoRascunho = status === 'em_andamento' && cur.inspector === actor;
+        if (!admin && !donoDoRascunho) {
+          return fail(403, status === 'em_andamento'
+            ? 'Somente administradores ou quem iniciou a inspeção podem descartá-la.'
+            : 'Somente administradores podem excluir inspeções concluídas.');
+        }
+        // Devolve os arquivos de foto para o servidor apagar do disco.
+        const fotosArquivos = [];
+        if (cur.fotos && typeof cur.fotos === 'object') {
+          for (const k of Object.keys(cur.fotos)) {
+            for (const f of (Array.isArray(cur.fotos[k]) ? cur.fotos[k] : [])) {
+              if (f && f.arquivo) fotosArquivos.push(f.arquivo);
+            }
+          }
+        }
+        DB.inspections = DB.inspections.filter((i) => i !== cur);
+        audit(actor, 'excluir', 'inspection', cur.id, cur.room_name || cur.template_nome,
+          status === 'em_andamento'
+            ? `Rascunho de inspeção descartado (${cur.template_nome || 'Inspeção 5S'})`
+            : `Inspeção 5S de ${cur.created_at} (${cur.score}%)`);
+        persist();
+        return ok({ ok: true, fotos_arquivos: fotosArquivos });
       }
       return fail(404, 'Rota não encontrada');
     }

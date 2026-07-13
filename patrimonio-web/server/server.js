@@ -49,6 +49,9 @@ function sendJson(res, status, obj) {
 // ---------------------------------------------------------------------------
 const EPI_ANEXOS_DIR = path.join(db.DATA_DIR, 'epi-anexos');
 fs.mkdirSync(EPI_ANEXOS_DIR, { recursive: true });
+// Fotos de evidência das inspeções 5S — também fora da pasta servida na web.
+const INSPECAO_FOTOS_DIR = path.join(db.DATA_DIR, 'inspecao-fotos');
+fs.mkdirSync(INSPECAO_FOTOS_DIR, { recursive: true });
 const zlib = require('zlib');
 
 // Decodifica um PNG RGB 8 bits (colorType 2, sem entrelaçamento) para RGB cru —
@@ -294,6 +297,8 @@ function handleApi(req, res) {
     const urlPath = req.url.split('?')[0];
     try {
       // Cópia de segurança (a base agora vive no servidor).
+      // Atenção: o export cobre só os DADOS (JSON). Fotos de inspeção e PDFs de
+      // EPI são arquivos em patrimonio-data/ — para backup completo, copie a pasta.
       if (urlPath === '/api/export' && req.method === 'GET') {
         return sendJson(res, 200, JSON.parse(db.dump()));
       }
@@ -365,6 +370,89 @@ function handleApi(req, res) {
             'Content-Length': data.length,
           });
         });
+      }
+      // Foto de evidência da inspeção 5S: recebe base64, salva o arquivo no
+      // servidor e registra só o nome na base (mesmo padrão dos anexos de EPI).
+      m = urlPath.match(/^\/api\/inspections\/(\d+)\/foto$/);
+      if (m && req.method === 'POST') {
+        const dataUrl = String(body.foto_base64 || '');
+        const tipos = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+        const cab = /^data:(image\/(?:jpeg|png|webp));base64,/.exec(dataUrl);
+        if (!cab) return sendJson(res, 400, { error: 'Envie uma imagem (JPG, PNG ou WebP).' });
+        let buf;
+        try { buf = Buffer.from(dataUrl.slice(cab[0].length), 'base64'); }
+        catch (e) { return sendJson(res, 400, { error: 'Imagem inválida.' }); }
+        if (!buf || buf.length < 100) return sendJson(res, 400, { error: 'Imagem vazia ou inválida.' });
+        if (buf.length > 10 * 1024 * 1024) return sendJson(res, 400, { error: 'Imagem grande demais (máx. 10 MB).' });
+        const magicOk = (buf[0] === 0xFF && buf[1] === 0xD8) // JPEG
+          || (buf[0] === 0x89 && buf[1] === 0x50)            // PNG
+          || (buf.slice(0, 4).toString('latin1') === 'RIFF'); // WebP
+        if (!magicOk) return sendJson(res, 400, { error: 'O arquivo não é uma imagem válida.' });
+        const qid = String(body.question_id || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24);
+        if (!qid) return sendJson(res, 400, { error: 'Pergunta inválida.' });
+        const arquivo = `insp-${m[1]}-${qid}-${Date.now()}.${tipos[cab[1]]}`;
+        fs.writeFileSync(path.join(INSPECAO_FOTOS_DIR, arquivo), buf);
+        const rc = db.request('POST', `/api/inspections/${m[1]}/fotos`, {
+          question_id: body.question_id,
+          arquivo,
+          nome: body.nome || null,
+        }, operator);
+        if (!rc.ok) {
+          try { fs.unlinkSync(path.join(INSPECAO_FOTOS_DIR, arquivo)); } catch (e) { /* ignore */ }
+          return sendJson(res, rc.status || 400, rc.data || { error: 'Não foi possível anexar a foto.' });
+        }
+        notifyChange(urlPath, 'POST', operator, req);
+        return sendJson(res, 200, rc.data);
+      }
+      // Remover uma foto de evidência (base primeiro; depois o arquivo).
+      m = urlPath.match(/^\/api\/inspections\/(\d+)\/foto$/);
+      if (m && req.method === 'DELETE') {
+        const rc = db.request('DELETE', `/api/inspections/${m[1]}/fotos`, {
+          question_id: body.question_id,
+          arquivo: body.arquivo,
+        }, operator);
+        if (!rc.ok) return sendJson(res, rc.status || 400, rc.data || { error: 'Não foi possível remover a foto.' });
+        const arq = rc.data && rc.data.arquivo;
+        if (arq && arq.startsWith(`insp-${m[1]}-`) && /^insp-\d+-[A-Za-z0-9_.-]+$/.test(arq)) {
+          try { fs.unlinkSync(path.join(INSPECAO_FOTOS_DIR, arq)); } catch (e) { /* ignore */ }
+        }
+        notifyChange(urlPath, 'DELETE', operator, req);
+        return sendJson(res, 200, rc.data);
+      }
+      // Servir uma foto de evidência.
+      m = urlPath.match(/^\/api\/inspections\/(\d+)\/foto\/([A-Za-z0-9_.-]+)$/);
+      if (m && req.method === 'GET') {
+        const arq = m[2];
+        if (!arq.startsWith(`insp-${m[1]}-`)) return sendJson(res, 403, { error: 'Arquivo inválido.' });
+        const alvo = path.normalize(path.join(INSPECAO_FOTOS_DIR, arq));
+        if (!alvo.startsWith(INSPECAO_FOTOS_DIR + path.sep)) return sendJson(res, 403, { error: 'Arquivo inválido.' });
+        const ctFoto = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }[path.extname(arq).toLowerCase()];
+        if (!ctFoto) return sendJson(res, 403, { error: 'Arquivo inválido.' });
+        return fs.readFile(alvo, (err, data) => {
+          if (err) return sendJson(res, 404, { error: 'Foto não encontrada no servidor.' });
+          send(res, 200, data, {
+            'Content-Type': ctFoto,
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'private, max-age=3600',
+            'Content-Length': data.length,
+          });
+        });
+      }
+      // Excluir inspeção: a base remove o registro e devolve a lista de fotos
+      // para apagarmos os arquivos do disco.
+      m = urlPath.match(/^\/api\/inspections\/(\d+)$/);
+      if (m && req.method === 'DELETE') {
+        const rc = db.request('DELETE', urlPath, body, operator);
+        if (rc.ok && rc.data && Array.isArray(rc.data.fotos_arquivos)) {
+          for (const arq of rc.data.fotos_arquivos) {
+            // Só apaga arquivos que pertencem à inspeção excluída.
+            if (String(arq).startsWith(`insp-${m[1]}-`) && /^insp-\d+-[A-Za-z0-9_.-]+$/.test(String(arq))) {
+              try { fs.unlinkSync(path.join(INSPECAO_FOTOS_DIR, String(arq))); } catch (e) { /* ignore */ }
+            }
+          }
+        }
+        if (rc.ok) notifyChange(urlPath, 'DELETE', operator, req);
+        return sendJson(res, rc.status || 200, rc.ok ? rc.data : (rc.data || { error: 'Erro' }));
       }
       // Todas as demais rotas vão para a lógica compartilhada (store.js).
       const r = db.request(req.method, req.url, body, operator,

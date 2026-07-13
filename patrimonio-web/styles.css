@@ -611,8 +611,9 @@ tbody tr.inv-row.is-conf:hover { background: #ebf6ef; }
 .s5-placar-linha { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 6px; }
 .s5-prog { height: 6px; border-radius: 999px; background: var(--line); overflow: hidden; }
 .s5-prog-fill { height: 100%; width: 0; border-radius: 999px; background: var(--accent, #1C7A45); transition: width .2s; }
-.s5-q { padding: 12px 10px; border: 1px solid var(--line); border-radius: 12px; margin: 8px 0; background: var(--surface); }
-.s5-q.pende { border-color: #B23A2E; box-shadow: 0 0 0 1px #B23A2E inset; }
+.s5-q { padding: 12px 12px; border: 1px solid var(--line); border-left: 4px solid transparent; border-radius: 12px; margin: 8px 0; background: var(--surface); }
+/* obrigatória sem resposta: faixa vermelha à esquerda, como no SafetyCulture */
+.s5-q.pende { border-left-color: #B23A2E; }
 .s5-q-txt { font-size: 13.5px; font-weight: 600; margin-bottom: 10px; }
 .s5-q-resps { display: flex; gap: 8px; }
 .s5-btn {
@@ -635,6 +636,93 @@ tbody tr.inv-row.is-conf:hover { background: #ebf6ef; }
 .s5-nota-link:hover { text-decoration: underline; }
 .s5-q .s5-obs { margin-top: 8px; }
 .oculta5s { display: none !important; }
+
+/* ---------- Inspeção · histórico (tela inicial no modelo SafetyCulture) ---------- */
+.insp-count { margin-left: auto; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+tr.insp-grupo td {
+  padding: 8px 10px 4px; font-size: 11.5px; font-weight: 800; letter-spacing: .4px;
+  text-transform: uppercase; color: var(--muted); border-bottom: 0; background: transparent;
+}
+tr.insp-linha { cursor: pointer; }
+.insp-nome { display: flex; align-items: center; gap: 10px; }
+.insp-avatar {
+  flex: none; width: 34px; height: 34px; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent-soft, #E7F3EC); color: var(--accent, #1C7A45);
+  font-size: 12.5px; font-weight: 800; letter-spacing: .3px;
+}
+[data-tema="escuro"] .insp-avatar { background: #1D3226; color: #8FD6A0; }
+
+/* ---------- Inspeção · modal "Qual inspeção você deseja iniciar?" ---------- */
+.insp-modal { width: min(560px, 92vw); }
+.tpl-lista { display: flex; flex-direction: column; gap: 8px; margin: 14px 0 4px; }
+.tpl-opt {
+  display: flex; align-items: center; gap: 12px; text-align: left; width: 100%;
+  padding: 12px; border: 1.5px solid var(--line); border-radius: 12px;
+  background: var(--surface); color: inherit; cursor: pointer;
+}
+.tpl-opt:hover { border-color: var(--accent, #1C7A45); }
+.tpl-opt.sel { border-color: var(--accent, #1C7A45); box-shadow: 0 0 0 1px var(--accent, #1C7A45) inset; }
+.tpl-txt { display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; }
+.tpl-txt .muted { font-size: 12px; }
+
+/* ---------- Inspeção · formulário paginado ---------- */
+.insp-topo { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.insp-topo-txt { min-width: 0; }
+.insp-tpl-nome { font-size: 16px; font-weight: 800; }
+.insp-topo .muted { font-size: 12px; }
+.insp-pag-head {
+  /* top compensa a topbar do app, que também é sticky (~56px de altura) */
+  position: sticky; top: 60px; z-index: 2;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 14px; margin-bottom: 10px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surface);
+}
+.insp-pag-num { font-size: 12px; }
+.insp-pag-titulo { font-size: 14.5px; font-weight: 800; }
+.insp-pag-score { text-align: right; font-size: 12px; line-height: 1.35; white-space: nowrap; }
+.insp-pag-score strong { font-size: 14px; }
+.insp-in {
+  width: 100%; max-width: 420px; display: block; margin-top: 2px;
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  font-size: 13.5px; background: var(--surface); color: inherit;
+}
+textarea.insp-texto { max-width: 100%; resize: vertical; }
+.insp-q-links { display: flex; gap: 16px; justify-content: flex-end; }
+.req { color: #B23A2E; font-weight: 800; margin-right: 4px; }
+.insp-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 16px 0 28px; }
+.insp-fotos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.insp-foto { position: relative; display: inline-block; }
+.insp-foto img {
+  width: 86px; height: 86px; object-fit: cover; display: block;
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.insp-foto-x {
+  position: absolute; top: -6px; right: -6px; width: 20px; height: 20px;
+  border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  color: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+}
+.insp-foto-x:hover { border-color: #B23A2E; color: #B23A2E; }
+.insp-foto-add {
+  margin-top: 8px; padding: 9px 14px; width: 100%; max-width: 420px;
+  border: 1.5px dashed var(--accent, #1C7A45); border-radius: 10px;
+  background: none; color: var(--accent, #1C7A45);
+  font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.insp-foto-add:hover { background: var(--accent-soft, #E7F3EC); }
+[data-tema="escuro"] .insp-foto-add:hover { background: #1D3226; }
+
+/* ---------- Inspeção · detalhe (gaveta) ---------- */
+.insp-header-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 10px 0 4px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+}
+.insp-hitem { display: flex; flex-direction: column; font-size: 13px; }
+.insp-hitem .muted { font-size: 11.5px; }
+.insp-ps {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 4px; font-size: 13px; border-bottom: 1px dashed var(--line);
+}
 
 /* ---------- Entrega de EPIs (assinatura digital por link) ---------- */
 .epi-item-row { display: grid; grid-template-columns: 1fr 84px 64px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }

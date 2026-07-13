@@ -74,7 +74,9 @@
     try { data = await res.json(); } catch (e) { /* resposta sem corpo */ }
     if (!res.ok) {
       const msg = (data && data.error) ? data.error : ('Erro ' + res.status);
-      throw new Error(msg);
+      const err = new Error(msg);
+      err.status = res.status; // deixa o chamador distinguir 404/409 de queda de rede
+      throw err;
     }
     return data;
   }
@@ -323,7 +325,11 @@
         case 'homeoffice': setTitle('Home Office'); await renderHomeOffice(); break;
         case 'epis': setTitle('Entrega de EPIs'); await renderEpis(); break;
         case 'inventario': setTitle('Inventário'); setTopbar(''); await renderInventory(); break;
-        case 'inspecao': setTitle('Inspeção 5S'); setTopbar(''); await renderInspecao5S(); break;
+        case 'inspecao':
+          setTitle('Inspeção 5S');
+          if (rest[0] === 'preencher' && rest[1]) { setTopbar(''); await renderPreencherInspecao(rest[1]); }
+          else await renderInspecao5S();
+          break;
         case 'etiquetas': setTitle('Etiquetas'); setTopbar(''); await renderLabels(); break;
         case 'auditoria': setTitle('Auditoria'); setTopbar(''); await renderAudit(); break;
         case 'operadores':
@@ -1224,52 +1230,59 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Inspeção 5S (checklist detalhado por local)
+  // Inspeção 5S — fluxo no modelo SafetyCulture
   // ---------------------------------------------------------------------------
-  // Perguntas em linguagem simples: responda Sim (está bom), Não (tem problema) ou N/A.
-  const CHECKLIST_5S = [
-    { s: '1º S · Utilização — o que não serve deve sair', itens: [
-      'O local está livre de itens quebrados, velhos ou sem uso?',
-      'As mesas e bancadas estão livres de materiais e caixas que não são usados ali?',
-      'O local está livre de papéis e documentos velhos acumulados?',
-      'Os itens pessoais se limitam ao necessário?',
-      'Todo o lixo está dentro das lixeiras (nada jogado pelo local)?',
-      'O que não serve mais já foi retirado (descarte, doação ou transferência)?',
-    ] },
-    { s: '2º S · Organização — um lugar para cada coisa', itens: [
-      'Cada coisa tem o seu lugar e está guardada no lugar certo?',
-      'Os equipamentos têm a etiqueta de patrimônio visível?',
-      'O que é usado todo dia está fácil de pegar?',
-      'Armários, gavetas e prateleiras estão arrumados e identificados?',
-      'Os fios e cabos estão organizados (nada embolado nem pelo chão)?',
-      'Os corredores e passagens estão livres, sem nada atrapalhando?',
-      'Os móveis e equipamentos estão bem posicionados e seguros?',
-    ] },
-    { s: '3º S · Limpeza — ambiente limpo', itens: [
-      'O chão está limpo (sem poeira, sujeira ou manchas)?',
-      'As mesas e superfícies de trabalho estão limpas?',
-      'Os equipamentos (computador, telefone, máquinas) estão limpos?',
-      'Paredes, portas, janelas e vidros estão limpos?',
-      'As lixeiras dão conta e são esvaziadas com frequência?',
-      'A copa/banheiro do local está limpa e abastecida? (se não houver, marque N/A)',
-      'O local está livre de mofo, infiltração, vazamento ou pragas?',
-    ] },
-    { s: '4º S · Padronização — regras claras e ambiente saudável', itens: [
-      'As regras de organização e limpeza estão visíveis (quadros, etiquetas, faixas)?',
-      'A iluminação é boa e todas as lâmpadas funcionam?',
-      'A ventilação ou o ar-condicionado do ambiente funciona bem?',
-      'A sinalização de segurança está em ordem (extintor, saída, avisos)?',
-      'Cadeiras, mesas e apoios são adequados e confortáveis?',
-      'O local passa uma boa impressão geral de ordem e bem-estar?',
-    ] },
-    { s: '5º S · Disciplina — manter o combinado todo dia', itens: [
-      'A equipe cumpre a rotina de limpeza e organização?',
-      'As pendências da última inspeção foram resolvidas?',
-      'As pessoas mantêm o padrão sem precisar ser cobradas?',
-      'Depois de usar, as pessoas devolvem as coisas ao lugar?',
-      'As inspeções 5S estão sendo feitas na frequência combinada?',
-    ] },
-  ];
+  // A tela inicial mostra apenas o histórico de inspeções. Toda inspeção nova
+  // nasce no botão "Iniciar inspeção": escolhe-se um modelo e o preenchimento é
+  // feito página por página (SIM / NÃO / N/A, anotações e fotos de evidência).
+  // Os modelos vêm do servidor (GET /api/inspection-templates).
+  let inspModelos = null; // cache dos modelos de inspeção
+  async function ensureInspModelos(force) {
+    if (force || !inspModelos) inspModelos = await api('/api/inspection-templates');
+    return inspModelos;
+  }
+
+  // Iniciais do modelo para o avatar da lista (ex.: "5S - Auditoria…" → "5A").
+  function inspIniciais(nome) {
+    const palavras = String(nome || '').split(/[^A-Za-zÀ-ÿ0-9]+/).filter(Boolean);
+    return (palavras.slice(0, 2).map((w) => w[0]).join('') || '5S').toUpperCase();
+  }
+
+  // Agrupa o histórico por dia, como no SafetyCulture (HOJE / ONTEM / data).
+  function inspGrupoDia(createdAt) {
+    const dia = String(createdAt || '').slice(0, 10);
+    const p = (n) => String(n).padStart(2, '0');
+    const iso = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    const hoje = new Date();
+    if (dia === iso(hoje)) return 'Hoje';
+    if (dia === iso(new Date(hoje.getTime() - 86400000))) return 'Ontem';
+    return fmtDate(dia);
+  }
+
+  // Reduz a foto no navegador antes de enviar (celulares mandam fotos enormes).
+  function comprimirImagem(file) {
+    return new Promise((resolve, reject) => {
+      if (!file || !/^image\//.test(file.type)) return reject(new Error('Escolha um arquivo de imagem (foto).'));
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        try {
+          const MAX = 1600;
+          const f = Math.min(1, MAX / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * f));
+          const h = Math.max(1, Math.round(img.height * f));
+          const cv = document.createElement('canvas');
+          cv.width = w; cv.height = h;
+          cv.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(cv.toDataURL('image/jpeg', 0.85));
+        } catch (e) { reject(new Error('Não foi possível processar a imagem.')); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Não foi possível ler a imagem.')); };
+      img.src = url;
+    });
+  }
+
   const RESP_5S = {
     sim: { rotulo: 'Sim', cls: 'ok' },
     nao: { rotulo: 'Não', cls: 'bad' },
@@ -1290,247 +1303,629 @@
     return `<span class="s5-chip ${c.cls}">${score != null ? score + '% · ' : ''}${escapeHtml(c.rotulo)}</span>`;
   };
 
+  // Tela inicial: só o histórico de inspeções (novas nascem em "Iniciar inspeção").
   async function renderInspecao5S() {
+    setTopbar('<button class="btn btn-primary" id="insp-nova">+ Iniciar inspeção</button>');
+    $('insp-nova').onclick = iniciarInspecao;
     view().innerHTML = '<div class="empty">Carregando…</div>';
-    const [rooms, inspecoes] = await Promise.all([ensureRooms(true), api('/api/inspections')]);
-    const porLocal = {};
-    for (const i of inspecoes) {
-      if (!porLocal[i.room_id]) porLocal[i.room_id] = [];
-      porLocal[i.room_id].push(i); // já vem mais recente primeiro
-    }
-    const comNota = rooms.filter((r) => porLocal[r.id] && porLocal[r.id].length);
-    const media = comNota.length
-      ? Math.round(comNota.reduce((s, r) => s + porLocal[r.id][0].score, 0) / comNota.length)
-      : null;
-    const criticos = comNota.filter((r) => ['critico', 'desorganizado'].includes(porLocal[r.id][0].classificacao)).length;
+    const inspecoes = await api('/api/inspections'); // já vem mais recente primeiro
 
     view().innerHTML = `
-      <div class="cards">
-        ${statCard('Locais cadastrados', rooms.length)}
-        ${statCard('Locais inspecionados', comNota.length, comNota.length === rooms.length && rooms.length ? 'is-accent' : '')}
-        ${statCard('Nota média (última inspeção)', media == null ? '—' : media + '%', media != null && media >= 70 ? 'is-accent' : (media != null ? 'is-warn' : ''))}
-        ${statCard('Locais em atenção', criticos, criticos ? 'is-warn' : '')}
-      </div>
       <div class="toolbar">
-        <div class="search"><input id="s5-q" placeholder="Buscar local…"></div>
-        <div class="chip-row" id="s5-filtros">
-          <button class="fchip active" data-f="">Todos</button>
-          <button class="fchip" data-f="excelente">Excelente</button>
-          <button class="fchip" data-f="organizado">Organizado</button>
-          <button class="fchip" data-f="desorganizado">Desorganizado</button>
-          <button class="fchip" data-f="critico">Crítico</button>
-          <button class="fchip" data-f="sem">Sem inspeção</button>
+        <div class="search"><input id="insp-q" placeholder="Pesquisar inspeção, local ou operador…"></div>
+        <div class="chip-row" id="insp-filtros">
+          <button class="fchip active" data-f="">Todas</button>
+          <button class="fchip" data-f="em_andamento">Em andamento</button>
+          <button class="fchip" data-f="concluida">Concluídas</button>
         </div>
+        <div class="insp-count" id="insp-count"></div>
       </div>
-      <div class="panel"><div id="s5-rows"></div></div>`;
+      <div class="panel"><div id="insp-rows"></div></div>`;
 
     let filtro = '';
     const draw = () => {
-      const term = ($('s5-q').value || '').toLowerCase();
-      const rows = rooms.filter((r) => {
-        if (term && !(r.name || '').toLowerCase().includes(term)) return false;
-        const ult = (porLocal[r.id] || [])[0];
-        if (!filtro) return true;
-        if (filtro === 'sem') return !ult;
-        return ult && ult.classificacao === filtro;
+      const term = ($('insp-q').value || '').toLowerCase();
+      const rows = inspecoes.filter((i) => {
+        if (filtro && (i.status || 'concluida') !== filtro) return false;
+        if (!term) return true;
+        return [i.template_nome || '', i.room_name || '', i.inspector || '']
+          .join(' ').toLowerCase().includes(term);
       });
-      $('s5-rows').innerHTML = !rows.length
-        ? '<div class="empty">Nenhum local para este filtro.</div>'
-        : `<div class="table-wrap"><table>
-            <thead><tr><th>Local</th><th>Última inspeção</th><th>Resultado</th><th class="num">Respostas “Não”</th><th class="num">Inspeções</th><th></th></tr></thead>
-            <tbody>${rows.map((r) => {
-              const hist = porLocal[r.id] || [];
-              const ult = hist[0];
-              return `<tr>
-                <td><div class="cell-title">${escapeHtml(r.name)}</div>
-                    <div class="muted">${r.item_count || 0} item(ns) no local</div></td>
-                <td>${ult ? escapeHtml(ult.created_at) + '<div class="muted">por ' + escapeHtml(ult.inspector) + '</div>' : '<span class="muted">Nunca inspecionado</span>'}</td>
-                <td>${ult ? chip5s(ult.classificacao, ult.score) : '<span class="s5-chip na">Pendente</span>'}</td>
-                <td class="num mono">${ult ? (ult.nao_conformes + (ult.parciais ? ' (+' + ult.parciais + ' parciais)' : '')) : '—'}</td>
-                <td class="num mono">${hist.length}</td>
-                <td><div class="row-actions">
-                  <button class="btn btn-mini btn-primary" data-inspecionar="${r.id}">Inspecionar</button>
-                  ${hist.length ? `<button class="btn btn-mini btn-ghost" data-historico="${r.id}">Histórico</button>` : ''}
-                </div></td>
-              </tr>`;
-            }).join('')}</tbody></table></div>`;
-      $('s5-rows').querySelectorAll('[data-inspecionar]').forEach((b) => {
-        b.onclick = () => inspecao5sForm(rooms.find((r) => String(r.id) === b.dataset.inspecionar));
+      $('insp-count').textContent = rows.length
+        ? `1 - ${rows.length} de ${rows.length} resultado${rows.length === 1 ? '' : 's'}`
+        : '0 resultados';
+      if (!rows.length) {
+        $('insp-rows').innerHTML = inspecoes.length
+          ? '<div class="empty">Nenhuma inspeção para este filtro.</div>'
+          : '<div class="empty">Nenhuma inspeção ainda. Clique em “+ Iniciar inspeção” para fazer a primeira.</div>';
+        return;
+      }
+      let html = `<div class="table-wrap"><table>
+        <thead><tr><th>Inspeção</th><th>Local</th><th>Pontuação</th><th>Realizada</th><th>Concluída</th><th></th></tr></thead><tbody>`;
+      let grupo = null;
+      for (const i of rows) {
+        const g = inspGrupoDia(i.created_at);
+        if (g !== grupo) { grupo = g; html += `<tr class="insp-grupo"><td colspan="6">${escapeHtml(g)}</td></tr>`; }
+        const emAndamento = (i.status || 'concluida') === 'em_andamento';
+        // rascunho é de quem o iniciou: só o dono (ou admin) continua/descarta
+        const podeContinuar = emAndamento && (isAdmin() || i.inspector === state.operator);
+        const podeExcluir = isAdmin() || (emAndamento && i.inspector === state.operator);
+        html += `<tr class="insp-linha" data-id="${i.id}">
+          <td><div class="insp-nome">
+            <span class="insp-avatar">${escapeHtml(inspIniciais(i.template_nome))}</span>
+            <div><div class="cell-title">${escapeHtml(i.template_nome || 'Inspeção 5S')}</div>
+              <div class="muted">por ${escapeHtml(i.inspector || '—')}</div></div>
+          </div></td>
+          <td>${i.room_name ? escapeHtml(i.room_name) : '<span class="muted">—</span>'}</td>
+          <td>${emAndamento ? '<span class="s5-chip warn">Em andamento</span>' : chip5s(i.classificacao, i.score)}</td>
+          <td>${fmtDateTime(i.created_at)}</td>
+          <td>${i.concluida_em ? fmtDateTime(i.concluida_em) : '<span class="muted">—</span>'}</td>
+          <td><div class="row-actions">
+            ${emAndamento
+              ? (podeContinuar ? `<button class="btn btn-mini btn-primary" data-continuar="${i.id}">Continuar</button>` : '')
+              : `<button class="btn btn-mini btn-ghost" data-ver="${i.id}">Ver</button>`}
+            ${podeExcluir ? `<button class="btn btn-mini btn-ghost" data-excluir="${i.id}" title="${emAndamento ? 'Descartar rascunho' : 'Excluir inspeção'}">🗑</button>` : ''}
+          </div></td>
+        </tr>`;
+      }
+      html += '</tbody></table></div>';
+      $('insp-rows').innerHTML = html;
+
+      const porId = (idStr) => inspecoes.find((i) => String(i.id) === idStr);
+      $('insp-rows').querySelectorAll('[data-continuar]').forEach((b) => {
+        b.onclick = (e) => { e.stopPropagation(); location.hash = '#/inspecao/preencher/' + b.dataset.continuar; };
       });
-      $('s5-rows').querySelectorAll('[data-historico]').forEach((b) => {
-        b.onclick = () => historico5s(rooms.find((r) => String(r.id) === b.dataset.historico), porLocal[b.dataset.historico] || []);
+      $('insp-rows').querySelectorAll('[data-ver]').forEach((b) => {
+        b.onclick = (e) => { e.stopPropagation(); const i = porId(b.dataset.ver); if (i) detalheInspecao(i); };
+      });
+      $('insp-rows').querySelectorAll('[data-excluir]').forEach((b) => {
+        b.onclick = async (e) => {
+          e.stopPropagation();
+          const i = porId(b.dataset.excluir);
+          if (!i) return;
+          const emAndamento = (i.status || 'concluida') === 'em_andamento';
+          const ok2 = await confirmDialog(
+            emAndamento ? 'Descartar rascunho' : 'Excluir inspeção',
+            emAndamento
+              ? `Descartar a inspeção em andamento de ${fmtDateTime(i.created_at)}? As respostas e fotos serão perdidas.`
+              : `Excluir a inspeção de ${fmtDateTime(i.created_at)}${i.room_name ? ' do local “' + i.room_name + '”' : ''}? Esta ação não pode ser desfeita.`,
+            emAndamento ? 'Descartar' : 'Excluir', true);
+          if (!ok2) return;
+          try { await api('/api/inspections/' + i.id, { method: 'DELETE' }); toast(emAndamento ? 'Rascunho descartado.' : 'Inspeção excluída.'); rerender(); }
+          catch (err) { toast(err.message, 'err'); }
+        };
+      });
+      // clicar na linha faz o mesmo que o botão principal dela
+      $('insp-rows').querySelectorAll('.insp-linha').forEach((tr) => {
+        tr.onclick = () => {
+          const i = inspecoes.find((x) => String(x.id) === tr.dataset.id);
+          if (!i) return;
+          if ((i.status || 'concluida') === 'em_andamento') {
+            if (isAdmin() || i.inspector === state.operator) location.hash = '#/inspecao/preencher/' + i.id;
+            else toast(`Somente ${i.inspector || 'quem iniciou'} (ou um administrador) pode continuar esta inspeção.`, 'err');
+          } else detalheInspecao(i);
+        };
       });
     };
-    $('s5-filtros').querySelectorAll('.fchip').forEach((c) => {
+    $('insp-filtros').querySelectorAll('.fchip').forEach((c) => {
       c.onclick = () => {
-        $('s5-filtros').querySelectorAll('.fchip').forEach((x) => x.classList.remove('active'));
+        $('insp-filtros').querySelectorAll('.fchip').forEach((x) => x.classList.remove('active'));
         c.classList.add('active');
         filtro = c.dataset.f;
         draw();
       };
     });
     let deb;
-    $('s5-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 200); });
+    $('insp-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 200); });
     draw();
   }
 
-  function inspecao5sForm(room) {
-    const body = openDrawer('Inspeção 5S — ' + room.name);
-    const linhas = [];
-    let idx = 0;
-    for (const grupo of CHECKLIST_5S) {
-      linhas.push(`<div class="s5-secao">${escapeHtml(grupo.s)}</div>`);
-      for (const item of grupo.itens) {
-        linhas.push(`<div class="s5-q" data-idx="${idx}" data-cat="${escapeHtml(grupo.s)}" data-item="${escapeHtml(item)}">
-          <div class="s5-q-txt">${escapeHtml(item)}</div>
-          <div class="s5-q-resps">
-            <button type="button" class="s5-btn ok" data-resp="sim">Sim</button>
-            <button type="button" class="s5-btn bad" data-resp="nao">Não</button>
-            <button type="button" class="s5-btn na" data-resp="na">N/A</button>
-          </div>
-          <button type="button" class="s5-nota-link">✎ Adicionar anotação</button>
-          <input class="s5-obs oculta5s" maxlength="300" placeholder="Escreva a anotação…">
-        </div>`);
-        idx += 1;
+  // "Iniciar inspeção": com um único modelo cadastrado, abre o formulário
+  // direto; a escolha de modelo só aparece se um dia houver mais de um.
+  async function iniciarInspecao() {
+    const btn = $('insp-nova');
+    if (btn) btn.disabled = true;
+    try {
+      const modelos = await ensureInspModelos();
+      if (!modelos.length) { toast('Nenhum modelo de inspeção disponível.', 'err'); return; }
+      if (modelos.length > 1) { modalIniciarInspecao(modelos); return; }
+      const r = await api('/api/inspections', { method: 'POST', body: { template_key: modelos[0].key } });
+      location.hash = '#/inspecao/preencher/' + r.id;
+    } catch (e) {
+      toast(e.message, 'err');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // Modal "Qual inspeção você deseja iniciar?" — escolha do modelo.
+  function modalIniciarInspecao(modelos) {
+    const back = document.createElement('div');
+    back.className = 'modal-backdrop';
+    back.innerHTML = `
+      <div class="modal insp-modal" role="dialog" aria-modal="true">
+        <h3>Qual inspeção você deseja iniciar?</h3>
+        <div class="tpl-lista">
+          ${modelos.map((t) => `
+            <button type="button" class="tpl-opt" data-key="${escapeHtml(t.key)}">
+              <span class="insp-avatar">${escapeHtml(inspIniciais(t.nome))}</span>
+              <span class="tpl-txt"><strong>${escapeHtml(t.nome)}</strong>
+                <span class="muted">${escapeHtml(t.descricao || '')}</span></span>
+            </button>`).join('')}
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-ghost" data-act="cancelar">Cancelar</button>
+          <button class="btn btn-primary" data-act="iniciar" disabled>Iniciar inspeção</button>
+        </div>
+      </div>`;
+    document.body.appendChild(back);
+    let key = null;
+    const btnIniciar = back.querySelector('[data-act="iniciar"]');
+    const fechar = () => back.remove();
+    const iniciar = async () => {
+      if (!key) return;
+      btnIniciar.disabled = true;
+      try {
+        const r = await api('/api/inspections', { method: 'POST', body: { template_key: key } });
+        fechar();
+        location.hash = '#/inspecao/preencher/' + r.id;
+      } catch (e) { btnIniciar.disabled = false; toast(e.message, 'err'); }
+    };
+    back.querySelectorAll('.tpl-opt').forEach((b) => {
+      b.onclick = () => {
+        back.querySelectorAll('.tpl-opt').forEach((x) => x.classList.remove('sel'));
+        b.classList.add('sel');
+        key = b.dataset.key;
+        btnIniciar.disabled = false;
+      };
+      b.ondblclick = () => { key = b.dataset.key; iniciar(); };
+    });
+    back.querySelector('[data-act="cancelar"]').onclick = fechar;
+    btnIniciar.onclick = iniciar;
+    back.addEventListener('click', (e) => { if (e.target === back) fechar(); });
+  }
+
+  // Formulário paginado em tela cheia (como o preenchimento do SafetyCulture):
+  // "Página N de M" + seção + pontuação, cartões de pergunta, autosave e fotos.
+  async function renderPreencherInspecao(id) {
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    let modelos;
+    let insp;
+    try {
+      [modelos, insp] = await Promise.all([ensureInspModelos(), api('/api/inspections/' + id)]);
+      await ensureRooms(true);
+    } catch (e) {
+      view().innerHTML = `<div class="empty">Erro ao abrir a inspeção: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    if ((insp.status || 'concluida') !== 'em_andamento') {
+      toast('Esta inspeção já foi concluída.');
+      location.hash = '#/inspecao';
+      return;
+    }
+    if (!isAdmin() && insp.inspector !== state.operator) {
+      toast(`Somente ${insp.inspector || 'quem iniciou'} (ou um administrador) pode continuar esta inspeção.`, 'err');
+      location.hash = '#/inspecao';
+      return;
+    }
+    const tpl = modelos.find((t) => t.key === insp.template_key);
+    if (!tpl) {
+      view().innerHTML = '<div class="empty">O modelo desta inspeção não está mais disponível.</div>';
+      return;
+    }
+
+    const respostas = insp.respostas && typeof insp.respostas === 'object' ? insp.respostas : {};
+    let fotos = insp.fotos && typeof insp.fotos === 'object' ? insp.fotos : {};
+    let pagina = 0;
+    const totalPag = tpl.paginas.length;
+    const p2 = (n) => String(n).padStart(2, '0');
+
+    // Primeira abertura: pré-preenche a data (hoje) e quem inspeciona (operador).
+    const hoje = new Date();
+    const hojeIso = `${hoje.getFullYear()}-${p2(hoje.getMonth() + 1)}-${p2(hoje.getDate())}`;
+    for (const p of tpl.paginas) {
+      for (const c of (p.campos || [])) {
+        if (c.tipo === 'data' && !((respostas[c.id] || {}).v)) respostas[c.id] = { v: hojeIso };
+        if (c.id === 'c_inspetor' && !((respostas[c.id] || {}).v) && state.operator) respostas[c.id] = { v: state.operator };
       }
     }
-    body.innerHTML = `
-      <div class="s5-placar" id="s5-placar">
-        <div class="s5-placar-linha">
-          <span id="s5-prog-txt">0 de ${idx} respondidas</span>
-          <strong id="s5-score-txt">Pontuação: —</strong>
-        </div>
-        <div class="s5-prog"><div class="s5-prog-fill" id="s5-prog-fill"></div></div>
-      </div>
-      ${linhas.join('')}
-      <div class="field"><label for="s5-obsg">Observações gerais do local</label>
-        <textarea id="s5-obsg" rows="2" placeholder="Ex.: sala recém-reformada; mudança em andamento…"></textarea></div>
-      <div class="field"><label for="s5-plano">Criar ação — o que corrigir até a próxima inspeção</label>
-        <textarea id="s5-plano" rows="2" placeholder="Ex.: retirar caixas do corredor; trocar lâmpada; agendar limpeza…"></textarea></div>
-      <div class="form-actions">
-        <button class="btn btn-ghost" id="s5-cancel">Cancelar</button>
-        <button class="btn btn-primary" id="s5-save">Concluir inspeção</button>
-      </div>`;
 
-    const placar = () => {
-      let sims = 0, validos = 0, respondidos = 0;
-      body.querySelectorAll('.s5-q').forEach((el2) => {
-        const sel = el2.querySelector('.s5-btn.sel');
-        if (!sel) return;
-        respondidos += 1;
-        const v = sel.dataset.resp;
-        if (v === 'na') return;
-        validos += 1;
-        if (v === 'sim') sims += 1;
-      });
-      const total = body.querySelectorAll('.s5-q').length;
-      $('s5-prog-txt').textContent = `${respondidos} de ${total} respondidas`;
-      $('s5-prog-fill').style.width = Math.round((respondidos / total) * 100) + '%';
-      if (!validos) { $('s5-score-txt').textContent = 'Pontuação: —'; return; }
-      const pct = Math.round((sims / validos) * 100);
-      $('s5-score-txt').textContent = `Pontuação: ${sims} / ${validos} (${pct}%)`;
+    const respOf = (qid) => (respostas[qid] = respostas[qid] || {});
+    const haNao = () => Object.keys(respostas).some((k) => respostas[k] && respostas[k].resp === 'nao');
+    const notasAbertas = new Set(); // anotações abertas (ainda vazias) sobrevivem ao redraw
+    // Este formulário ainda está na tela? (evita redraw depois que o usuário saiu)
+    const rotaAtiva = () => {
+      const rt = state.route || {};
+      return rt.seg === 'inspecao' && (rt.rest || [])[0] === 'preencher' && String((rt.rest || [])[1]) === String(insp.id);
     };
-    body.querySelectorAll('.s5-btn').forEach((b) => {
-      b.onclick = () => {
-        const q = b.closest('.s5-q');
-        q.querySelectorAll('.s5-btn').forEach((x) => x.classList.remove('sel'));
-        b.classList.add('sel');
-        q.classList.remove('pende');
-        // resposta "Não" pede anotação do que está errado (como no SafetyCulture)
-        if (b.dataset.resp === 'nao') {
-          const obs = q.querySelector('.s5-obs');
-          obs.classList.remove('oculta5s');
-          obs.placeholder = 'O que está errado? (recomendado)';
-          q.querySelector('.s5-nota-link').classList.add('oculta5s');
+
+    // --- autosave (as respostas ficam no servidor; dá para continuar depois) ---
+    // Todas as gravações passam por uma fila única, e o servidor confere a
+    // versão (base_updated_at) para duas sessões não se apagarem mutuamente.
+    let saveTimer = null;
+    let baseRev = insp.updated_at || null;
+    let fila = Promise.resolve();
+    const enfileirar = (fn) => {
+      const p = fila.then(fn);
+      fila = p.then(() => {}, () => {});
+      return p;
+    };
+    const setSaveTxt = (t) => { const el2 = $('insp-save'); if (el2) el2.textContent = t; };
+    function salvarAgora() {
+      return enfileirar(async () => {
+        setSaveTxt('Salvando…');
+        try {
+          const r = await api('/api/inspections/' + insp.id, { method: 'PUT', body: { respostas, base_updated_at: baseRev } });
+          baseRev = (r && r.updated_at) || baseRev;
+          const ag = new Date();
+          setSaveTxt(`Salvo automaticamente às ${p2(ag.getHours())}:${p2(ag.getMinutes())}`);
+          return true;
+        } catch (e) {
+          if (e.status === 409) {
+            // outra sessão salvou por cima: recarrega o rascunho do servidor
+            toast(e.message, 'err');
+            if (rotaAtiva()) renderPreencherInspecao(insp.id);
+            return false;
+          }
+          if (e.status === 404 || e.status === 400 || e.status === 403) {
+            // rascunho excluído/concluído/sem permissão: não adianta insistir
+            toast((e.message || 'Inspeção indisponível') + ' — voltando ao histórico.', 'err');
+            if (rotaAtiva()) location.hash = '#/inspecao';
+            return false;
+          }
+          setSaveTxt('⚠ Falha ao salvar — verifique a conexão');
+          return false;
         }
-        placar();
-      };
-    });
-    body.querySelectorAll('.s5-nota-link').forEach((b) => {
-      b.onclick = () => {
-        b.classList.add('oculta5s');
-        const obs = b.closest('.s5-q').querySelector('.s5-obs');
-        obs.classList.remove('oculta5s');
-        obs.focus();
-      };
-    });
-    $('s5-cancel').onclick = closeDrawer;
-    $('s5-save').onclick = async () => {
-      const items = [];
-      let faltando = 0;
-      let primeiro = null;
-      body.querySelectorAll('.s5-q').forEach((el2) => {
-        const sel = el2.querySelector('.s5-btn.sel');
-        if (!sel) { faltando += 1; el2.classList.add('pende'); if (!primeiro) primeiro = el2; return; }
-        items.push({
-          cat: el2.dataset.cat,
-          item: el2.dataset.item,
-          resp: sel.dataset.resp,
-          obs: el2.querySelector('.s5-obs').value.trim() || null,
+      });
+    }
+    function agendarSave() { clearTimeout(saveTimer); saveTimer = setTimeout(salvarAgora, 800); }
+
+    // pontuação da página no formato do SafetyCulture: X / Y (Z%), N/A fora da conta
+    function scorePagina(p) {
+      let sims = 0;
+      let na = 0;
+      let total = 0;
+      for (const q of (p.perguntas || [])) {
+        if ((q.tipo || 'sim_nao') !== 'sim_nao') continue;
+        total += 1;
+        const r = respostas[q.id] || {};
+        if (r.resp === 'sim') sims += 1;
+        else if (r.resp === 'na') na += 1;
+      }
+      const den = total - na;
+      return { sims, den, pct: den ? Math.round((sims / den) * 100) : 0, pontuavel: total > 0 };
+    }
+
+    function fotosHtml(qid, editavel) {
+      const arr = Array.isArray(fotos[qid]) ? fotos[qid] : [];
+      if (!arr.length) return '';
+      return `<div class="insp-fotos">${arr.map((f) => `
+        <span class="insp-foto">
+          <a href="/api/inspections/${insp.id}/foto/${encodeURIComponent(f.arquivo)}" target="_blank" rel="noopener" title="${escapeHtml(f.nome || 'Abrir foto')}">
+            <img src="/api/inspections/${insp.id}/foto/${encodeURIComponent(f.arquivo)}" alt="Foto de evidência"></a>
+          ${editavel ? `<button type="button" class="insp-foto-x" data-foto-del="${escapeHtml(qid)}|${escapeHtml(f.arquivo)}" title="Remover foto">✕</button>` : ''}
+        </span>`).join('')}</div>`;
+    }
+
+    function cardCampo(c) {
+      const r = respostas[c.id] || {};
+      const pende = c.obrigatorio && !String(r.v || '').trim();
+      let input = '';
+      if (c.tipo === 'local') {
+        const ops = (state.rooms || []).map((rm) =>
+          `<option value="${rm.id}"${String(rm.id) === String(r.v || '') ? ' selected' : ''}>${escapeHtml(rm.name)}</option>`).join('');
+        input = `<select class="insp-in" data-campo="${c.id}"><option value="">Escolha um local cadastrado…</option>${ops}</select>
+          ${(state.rooms || []).length ? '' : '<div class="hint">Nenhum local cadastrado ainda — cadastre na aba “Locais”.</div>'}`;
+      } else if (c.tipo === 'turno') {
+        const ops = (state.catalog.shifts || []).map((s) =>
+          `<option value="${s.key}"${s.key === (r.v || '') ? ' selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
+        input = `<select class="insp-in" data-campo="${c.id}"><option value="">Escolha o turno…</option>${ops}</select>`;
+      } else if (c.tipo === 'data') {
+        input = `<input type="date" class="insp-in" data-campo="${c.id}" value="${escapeHtml(r.v || '')}">`;
+      } else {
+        input = `<input type="text" class="insp-in" data-campo="${c.id}" maxlength="200" value="${escapeHtml(r.v || '')}">`;
+      }
+      return `<div class="s5-q${pende ? ' pende' : ''}" data-qcard="${c.id}" data-obrig="${c.obrigatorio ? '1' : ''}">
+        <div class="s5-q-txt">${c.obrigatorio ? '<span class="req">*</span>' : ''}${escapeHtml(c.rotulo)}</div>
+        ${input}
+      </div>`;
+    }
+
+    function cardPergunta(q) {
+      const tipo = q.tipo || 'sim_nao';
+      const r = respostas[q.id] || {};
+      let pende = false;
+      let corpo = '';
+      if (tipo === 'sim_nao') {
+        pende = q.obrigatorio && !r.resp;
+        corpo = `<div class="s5-q-resps">
+          <button type="button" class="s5-btn ok${r.resp === 'sim' ? ' sel' : ''}" data-resp="sim">SIM</button>
+          <button type="button" class="s5-btn bad${r.resp === 'nao' ? ' sel' : ''}" data-resp="nao">NÃO</button>
+          <button type="button" class="s5-btn na${r.resp === 'na' ? ' sel' : ''}" data-resp="na">N/A</button>
+        </div>`;
+      } else if (tipo === 'texto') {
+        const obrig = q.obrigatorio || (q.condicional === 'se_nao' && haNao());
+        pende = obrig && !String(r.v || '').trim();
+        corpo = `<textarea class="insp-in insp-texto" data-campo="${q.id}" rows="2" maxlength="500"
+          placeholder="${escapeHtml(q.dica || 'Escreva aqui…')}">${escapeHtml(r.v || '')}</textarea>`;
+      } else if (tipo === 'foto') {
+        corpo = `${fotosHtml(q.id, true)}
+          <button type="button" class="insp-foto-add" data-foto-add="${q.id}">🖼 Adicionar mídia</button>`;
+      }
+      const notaAberta = !!r.obs || notasAbertas.has(q.id);
+      const rodape = tipo === 'foto' ? '' : `
+        <div class="insp-q-links">
+          <button type="button" class="s5-nota-link" data-nota="${q.id}"${notaAberta ? ' hidden' : ''}>✎ Adicionar anotação</button>
+          <button type="button" class="s5-nota-link" data-foto-add="${q.id}">📷 Anexar mídia</button>
+        </div>
+        <input class="s5-obs${notaAberta ? '' : ' oculta5s'}" data-obs="${q.id}" maxlength="300"
+          placeholder="${r.resp === 'nao' && !r.obs ? 'O que está errado? (recomendado)' : 'Escreva a anotação…'}" value="${escapeHtml(r.obs || '')}">
+        ${fotosHtml(q.id, true)}`;
+      const marca = (tipo === 'sim_nao' && q.obrigatorio) || (tipo === 'texto' && (q.obrigatorio || (q.condicional === 'se_nao' && haNao())));
+      return `<div class="s5-q${pende ? ' pende' : ''}" data-qcard="${q.id}" data-tipo="${tipo}">
+        <div class="s5-q-txt">${marca ? '<span class="req">*</span>' : ''}${escapeHtml(q.texto)}</div>
+        ${corpo}${rodape}
+      </div>`;
+    }
+
+    // pendências de toda a inspeção (para validar antes de concluir)
+    function pendencias() {
+      const lista = [];
+      const temNao = haNao();
+      tpl.paginas.forEach((p, pi) => {
+        for (const c of (p.campos || [])) {
+          if (c.obrigatorio && !String(((respostas[c.id] || {}).v) || '').trim()) lista.push({ pi, id: c.id, texto: c.rotulo });
+        }
+        for (const q of (p.perguntas || [])) {
+          const tipo = q.tipo || 'sim_nao';
+          if (tipo === 'sim_nao') {
+            if (q.obrigatorio && !((respostas[q.id] || {}).resp)) lista.push({ pi, id: q.id, texto: q.texto });
+          } else if (tipo === 'texto') {
+            const obrig = q.obrigatorio || (q.condicional === 'se_nao' && temNao);
+            if (obrig && !String(((respostas[q.id] || {}).v) || '').trim()) lista.push({ pi, id: q.id, texto: q.texto });
+          }
+        }
+      });
+      return lista;
+    }
+
+    async function uploadFoto(qid, file) {
+      if (!file) return;
+      try {
+        const dataUrl = await comprimirImagem(file);
+        // na mesma fila do autosave, para as revisões (updated_at) não se cruzarem
+        const r = await enfileirar(() => api(`/api/inspections/${insp.id}/foto`, {
+          method: 'POST',
+          body: { question_id: qid, foto_base64: dataUrl, nome: file.name || null },
+        }));
+        fotos = r.fotos || {};
+        baseRev = (r && r.updated_at) || baseRev;
+        drawPagina();
+        toast('Foto anexada.');
+      } catch (e) { toast(e.message, 'err'); }
+    }
+
+    async function removerFoto(qid, arquivo) {
+      try {
+        const r = await enfileirar(() => api(`/api/inspections/${insp.id}/foto`, { method: 'DELETE', body: { question_id: qid, arquivo } }));
+        fotos = r.fotos || {};
+        baseRev = (r && r.updated_at) || baseRev;
+        drawPagina();
+      } catch (e) { toast(e.message, 'err'); }
+    }
+
+    function atualizarScore() {
+      const el2 = $('insp-score');
+      if (!el2) return;
+      const sc = scorePagina(tpl.paginas[pagina]);
+      el2.textContent = `${sc.sims} / ${sc.den} (${sc.pct}%)`;
+    }
+
+    function drawPagina(irAoTopo) {
+      if (!rotaAtiva()) return; // callback tardio (ex.: upload) depois que o usuário saiu
+      const scrollAntes = { v: view().scrollTop, w: window.scrollY };
+      const p = tpl.paginas[pagina];
+      const sc = scorePagina(p);
+      const cards = (p.campos || []).map(cardCampo).join('') + (p.perguntas || []).map(cardPergunta).join('');
+      view().innerHTML = `
+        <div class="insp-topo">
+          <button class="icon-btn" id="insp-voltar" title="Voltar ao histórico">←</button>
+          <div class="insp-topo-txt">
+            <div class="insp-tpl-nome">${escapeHtml(tpl.nome)}</div>
+            <div class="muted" id="insp-save">As respostas são salvas automaticamente</div>
+          </div>
+        </div>
+        <div class="insp-pag-head">
+          <div>
+            <div class="insp-pag-num muted">Página ${pagina + 1} de ${totalPag}</div>
+            <div class="insp-pag-titulo">${escapeHtml(p.titulo)}</div>
+          </div>
+          ${sc.pontuavel ? `<div class="insp-pag-score"><span class="muted">Pontuação</span><br><strong id="insp-score">${sc.sims} / ${sc.den} (${sc.pct}%)</strong></div>` : ''}
+        </div>
+        <div id="insp-cards">${cards}</div>
+        <div class="insp-nav">
+          ${pagina > 0 ? '<button class="btn btn-ghost" id="insp-prev">‹ Página anterior</button>' : '<span></span>'}
+          ${pagina < totalPag - 1
+            ? '<button class="btn btn-primary" id="insp-next">Próxima página ›</button>'
+            : '<button class="btn btn-primary" id="insp-fim">Inspeção concluída ✓</button>'}
+        </div>
+        <input type="file" accept="image/*" id="insp-file" hidden>`;
+      wire();
+      if (irAoTopo) {
+        view().scrollTop = 0;
+        window.scrollTo(0, 0);
+      } else {
+        view().scrollTop = scrollAntes.v;
+        window.scrollTo(0, scrollAntes.w);
+      }
+    }
+
+    function wire() {
+      const raiz = $('insp-cards');
+
+      $('insp-voltar').onclick = () => { clearTimeout(saveTimer); salvarAgora(); location.hash = '#/inspecao'; };
+
+      // SIM / NÃO / N/A
+      raiz.querySelectorAll('.s5-btn').forEach((b) => {
+        b.onclick = () => {
+          const card = b.closest('.s5-q');
+          const qid = card.dataset.qcard;
+          respOf(qid).resp = b.dataset.resp;
+          agendarSave();
+          // NÃO pede anotação do que está errado (como no SafetyCulture)
+          const pedirNota = b.dataset.resp === 'nao' && !respOf(qid).obs;
+          if (pedirNota) notasAbertas.add(qid);
+          drawPagina();
+          if (pedirNota) {
+            const obs = view().querySelector(`.s5-obs[data-obs="${qid}"]`);
+            if (obs) obs.focus();
+          }
+        };
+      });
+
+      // campos de texto / data / selects e anotações
+      raiz.querySelectorAll('.insp-in').forEach((inp) => {
+        const qid = inp.dataset.campo;
+        const aplicar = () => {
+          respOf(qid).v = inp.value;
+          const card = inp.closest('.s5-q');
+          if (card && card.dataset.obrig) card.classList.toggle('pende', !String(inp.value || '').trim());
+          agendarSave();
+        };
+        inp.addEventListener('input', aplicar);
+        inp.addEventListener('change', aplicar);
+      });
+      raiz.querySelectorAll('.s5-obs').forEach((inp) => {
+        inp.addEventListener('input', () => {
+          respOf(inp.dataset.obs).obs = inp.value;
+          agendarSave();
         });
       });
-      if (faltando) {
-        toast(`Responda a(s) ${faltando} pergunta(s) destacada(s) antes de concluir.`, 'err');
-        if (primeiro) primeiro.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        return;
+      raiz.querySelectorAll('[data-nota]').forEach((b) => {
+        b.onclick = () => {
+          b.hidden = true;
+          notasAbertas.add(b.dataset.nota); // sobrevive ao redraw da página
+          const obs = raiz.querySelector(`.s5-obs[data-obs="${b.dataset.nota}"]`);
+          if (obs) { obs.classList.remove('oculta5s'); obs.focus(); }
+        };
+      });
+
+      // fotos
+      const file = $('insp-file');
+      let fotoQid = null;
+      raiz.querySelectorAll('[data-foto-add]').forEach((b) => {
+        b.onclick = () => { fotoQid = b.dataset.fotoAdd; file.value = ''; file.click(); };
+      });
+      file.onchange = () => { if (file.files && file.files[0] && fotoQid) uploadFoto(fotoQid, file.files[0]); };
+      raiz.querySelectorAll('[data-foto-del]').forEach((b) => {
+        b.onclick = () => {
+          const [qid, arquivo] = b.dataset.fotoDel.split('|');
+          removerFoto(qid, arquivo);
+        };
+      });
+
+      // navegação entre páginas (salva antes de trocar)
+      const prev = $('insp-prev');
+      const next = $('insp-next');
+      const fim = $('insp-fim');
+      if (prev) prev.onclick = () => { clearTimeout(saveTimer); salvarAgora(); pagina -= 1; drawPagina(true); };
+      if (next) next.onclick = () => { clearTimeout(saveTimer); salvarAgora(); pagina += 1; drawPagina(true); };
+      if (fim) {
+        fim.onclick = async () => {
+          const falta = pendencias();
+          if (falta.length) {
+            toast(`Responda a(s) ${falta.length} pergunta(s) obrigatória(s) destacada(s) antes de concluir.`, 'err');
+            if (falta[0].pi !== pagina) { pagina = falta[0].pi; drawPagina(); }
+            const card = view().querySelector(`[data-qcard="${falta[0].id}"]`);
+            if (card) { card.classList.add('pende'); card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+            return;
+          }
+          fim.disabled = true;
+          try {
+            clearTimeout(saveTimer);
+            // garante que o servidor tem as respostas finais ANTES de congelar
+            const salvou = await salvarAgora();
+            if (!salvou) {
+              fim.disabled = false;
+              if (rotaAtiva()) toast('Não foi possível salvar as respostas — verifique a conexão e tente de novo.', 'err');
+              return;
+            }
+            const r = await api(`/api/inspections/${insp.id}/concluir`, { method: 'POST' });
+            toast(`Inspeção concluída: ${r.score}% — ${(CLASSIF_5S[r.classificacao] || {}).rotulo || r.classificacao}.`);
+            if (location.hash === '#/inspecao') rerender(); else location.hash = '#/inspecao';
+          } catch (e) {
+            fim.disabled = false;
+            toast(e.message, 'err');
+          }
+        };
       }
-      try {
-        const r = await api('/api/inspections', {
-          method: 'POST',
-          body: { room_id: room.id, items, obs_geral: $('s5-obsg').value.trim() || null, plano_acao: $('s5-plano').value.trim() || null },
-        });
-        toast(`Inspeção concluída: ${r.score}% — ${(CLASSIF_5S[r.classificacao] || {}).rotulo || r.classificacao}.`);
-        closeDrawer();
-        rerender();
-      } catch (e) { toast(e.message, 'err'); }
-    };
+    }
+
+    // Retomando um rascunho? reabre na primeira página com pergunta pendente
+    // (rascunho novo continua abrindo na página 1, que tem o cabeçalho vazio).
+    const falta0 = pendencias();
+    pagina = falta0.length ? falta0[0].pi : totalPag - 1;
+    drawPagina(true);
   }
 
-  function historico5s(room, lista) {
-    const body = openDrawer('Histórico 5S — ' + room.name);
-    body.innerHTML = lista.map((i) => `
-      <div class="s5-hist" data-id="${i.id}">
-        <div class="s5-hist-topo">
-          <strong>${escapeHtml(i.created_at)}</strong>
-          ${chip5s(i.classificacao, i.score)}
-        </div>
-        <div class="muted">por ${escapeHtml(i.inspector)} · ${i.conformes} Sim · ${i.nao_conformes} Não${i.parciais ? ' · ' + i.parciais + ' parciais' : ''}${i.nao_aplicaveis ? ' · ' + i.nao_aplicaveis + ' N/A' : ''}</div>
-      </div>`).join('') || '<div class="empty">Nenhuma inspeção registrada.</div>';
-    body.querySelectorAll('.s5-hist').forEach((d) => {
-      d.onclick = () => detalhe5s(room, lista, lista.find((i) => String(i.id) === d.dataset.id));
-    });
-  }
-
-  function detalhe5s(room, lista, insp) {
-    const body = openDrawer(`Inspeção 5S — ${room.name} · ${insp.created_at}`);
+  // Detalhe de uma inspeção concluída (funciona para as antigas e as novas).
+  function detalheInspecao(insp) {
+    const titulo = insp.template_nome || 'Inspeção 5S';
+    const body = openDrawer(`${titulo}${insp.room_name ? ' — ' + insp.room_name : ''}`);
     const grupos = {};
-    for (const it of insp.items) {
+    for (const it of (insp.items || [])) {
       if (!grupos[it.cat]) grupos[it.cat] = [];
       grupos[it.cat].push(it);
     }
+    const fotosDe = (qid) => {
+      const arr = (insp.fotos && insp.fotos[qid]) || [];
+      if (!arr.length) return '';
+      return `<div class="insp-fotos">${arr.map((f) => `
+        <span class="insp-foto">
+          <a href="/api/inspections/${insp.id}/foto/${encodeURIComponent(f.arquivo)}" target="_blank" rel="noopener" title="${escapeHtml(f.nome || 'Abrir foto')}">
+            <img src="/api/inspections/${insp.id}/foto/${encodeURIComponent(f.arquivo)}" alt="Foto de evidência"></a>
+        </span>`).join('')}</div>`;
+    };
     body.innerHTML = `
       <div class="s5-placar">${chip5s(insp.classificacao, insp.score)}
-        <div class="muted" style="margin-top:6px">por ${escapeHtml(insp.inspector)} · ${insp.conformes} Sim · ${insp.nao_conformes} Não${insp.parciais ? ' · ' + insp.parciais + ' parciais' : ''}${insp.nao_aplicaveis ? ' · ' + insp.nao_aplicaveis + ' N/A' : ''}</div>
+        <div class="muted" style="margin-top:6px">por ${escapeHtml(insp.inspector || '—')} · iniciada em ${fmtDateTime(insp.created_at)}${insp.concluida_em ? ' · concluída em ' + fmtDateTime(insp.concluida_em) : ''}</div>
+        <div class="muted">${insp.conformes || 0} Sim · ${insp.nao_conformes || 0} Não${insp.parciais ? ' · ' + insp.parciais + ' parciais' : ''}${insp.nao_aplicaveis ? ' · ' + insp.nao_aplicaveis + ' N/A' : ''}</div>
       </div>
+      ${Array.isArray(insp.header) && insp.header.length ? `<div class="insp-header-grid">${insp.header.map((h) => `
+        <div class="insp-hitem"><span class="muted">${escapeHtml(h.rotulo)}</span>
+          <strong>${h.valor ? escapeHtml(h.rotulo === 'Data' ? fmtDate(h.valor) : h.valor) : '—'}</strong></div>`).join('')}</div>` : ''}
+      ${Array.isArray(insp.paginas_score) && insp.paginas_score.length ? `
+        <div class="s5-secao">Pontuação por seção</div>
+        ${insp.paginas_score.filter((ps) => ps.total || ps.pontos).map((ps) => `
+          <div class="insp-ps"><span>${escapeHtml(ps.titulo)}</span>
+            <strong>${ps.pontos} / ${ps.total}${ps.pct == null ? '' : ' (' + ps.pct + '%)'}</strong></div>`).join('')}` : ''}
       ${insp.obs_geral ? `<div class="field"><label>Observações gerais</label><div class="hint">${escapeHtml(insp.obs_geral)}</div></div>` : ''}
       ${insp.plano_acao ? `<div class="field"><label>Plano de ação</label><div class="hint">${escapeHtml(insp.plano_acao)}</div></div>` : ''}
       ${Object.entries(grupos).map(([cat, itens]) => `
         <div class="s5-secao">${escapeHtml(cat)}</div>
-        ${itens.map((it) => `
-          <div class="s5-item lida ${it.resp === 'nao_conforme' ? 'pende' : ''}">
+        ${itens.map((it) => {
+          if (it.tipo === 'foto') {
+            const fhtml = fotosDe(it.qid);
+            return `<div class="s5-item lida"><div class="s5-item-txt muted">${escapeHtml(it.item)}</div>${fhtml || '<div class="muted" style="font-size:12px">Sem fotos anexadas.</div>'}</div>`;
+          }
+          if (it.tipo === 'texto') {
+            return `<div class="s5-item lida"><div class="s5-item-txt">${escapeHtml(it.item)}</div>
+              <div>${it.v ? escapeHtml(it.v) : '<span class="muted">—</span>'}</div>${it.qid ? fotosDe(it.qid) : ''}</div>`;
+          }
+          return `<div class="s5-item lida ${it.resp === 'nao' || it.resp === 'nao_conforme' ? 'pende' : ''}">
             <div class="s5-item-txt">${escapeHtml(it.item)}</div>
             <div><span class="s5-chip ${(RESP_5S[it.resp] || {}).cls || 'na'}">${escapeHtml((RESP_5S[it.resp] || {}).rotulo || it.resp)}</span>
-            ${it.obs ? `<span class="muted"> — ${escapeHtml(it.obs)}</span>` : ''}</div>
-          </div>`).join('')}`).join('')}
+            ${it.obs ? `<span class="muted"> — ${escapeHtml(it.obs)}</span>` : ''}</div>${it.qid ? fotosDe(it.qid) : ''}</div>`;
+        }).join('')}`).join('')}
       <div class="form-actions">
-        <button class="btn btn-ghost" id="s5-voltar">← Histórico</button>
-        ${isAdmin() ? `<button class="btn btn-ghost" id="s5-excluir">Excluir inspeção</button>` : ''}
+        ${isAdmin() ? '<button class="btn btn-ghost" id="insp-del">Excluir inspeção</button>' : ''}
       </div>`;
-    $('s5-voltar').onclick = () => historico5s(room, lista);
-    const ex = $('s5-excluir');
+    const ex = $('insp-del');
     if (ex) {
       ex.onclick = async () => {
-        const ok2 = await confirmDialog('Excluir inspeção', `Excluir a inspeção de ${insp.created_at} do local “${room.name}”?`, 'Excluir', true);
+        const ok2 = await confirmDialog('Excluir inspeção',
+          `Excluir a inspeção de ${fmtDateTime(insp.created_at)}${insp.room_name ? ' do local “' + insp.room_name + '”' : ''}? Esta ação não pode ser desfeita.`,
+          'Excluir', true);
         if (!ok2) return;
         try { await api('/api/inspections/' + insp.id, { method: 'DELETE' }); toast('Inspeção excluída.'); closeDrawer(); rerender(); }
         catch (e) { toast(e.message, 'err'); }
@@ -2748,6 +3143,8 @@
   function onRemoteChange() {
     // Inventário: atualiza a lista preservando o foco do leitor de código.
     if (state.route && state.route.seg === 'inventario' && invRefresh) { invRefresh(); return; }
+    // Preenchendo uma inspeção? não recarrega a tela no meio das respostas.
+    if (state.route && state.route.seg === 'inspecao' && (state.route.rest || [])[0] === 'preencher') { pendingRefresh = true; return; }
     // Operador ocupado (gaveta/modal aberto ou digitando)? adia até liberar.
     const drawerOpen = $('drawer') && $('drawer').classList.contains('open');
     const modalOpen = !!document.querySelector('.modal-backdrop');
