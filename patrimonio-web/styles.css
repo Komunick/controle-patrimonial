@@ -724,6 +724,12 @@ textarea.insp-texto { max-width: 100%; resize: vertical; }
   padding: 6px 4px; font-size: 13px; border-bottom: 1px dashed var(--line);
 }
 
+/* ---------- Inspeção · relatório semanal (gaveta) ---------- */
+.rel-nav {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 10px; font-size: 13.5px;
+}
+
 /* ---------- Entrega de EPIs (assinatura digital por link) ---------- */
 .epi-item-row { display: grid; grid-template-columns: 1fr 84px 64px 32px; gap: 6px; margin-bottom: 6px; align-items: center; }
 .epi-item-row input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font-size: 13px; background: var(--surface); color: inherit; }

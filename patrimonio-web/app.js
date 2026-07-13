@@ -1305,10 +1305,13 @@
 
   // Tela inicial: só o histórico de inspeções (novas nascem em "Iniciar inspeção").
   async function renderInspecao5S() {
-    setTopbar('<button class="btn btn-primary" id="insp-nova">+ Iniciar inspeção</button>');
+    setTopbar(`
+      <button class="btn btn-ghost" id="insp-relatorio">Relatório semanal</button>
+      <button class="btn btn-primary" id="insp-nova">+ Iniciar inspeção</button>`);
     $('insp-nova').onclick = iniciarInspecao;
     view().innerHTML = '<div class="empty">Carregando…</div>';
     const inspecoes = await api('/api/inspections'); // já vem mais recente primeiro
+    $('insp-relatorio').onclick = () => relatorioSemanal(inspecoes);
 
     view().innerHTML = `
       <div class="toolbar">
@@ -1866,6 +1869,72 @@
     const falta0 = pendencias();
     pagina = falta0.length ? falta0[0].pi : totalPag - 1;
     drawPagina(true);
+  }
+
+  // Relatório semanal: resumo das inspeções concluídas na semana (segunda a
+  // domingo) — data, quem inspecionou, pontuação de cada uma e a média da semana.
+  function relatorioSemanal(inspecoes) {
+    const body = openDrawer('Relatório semanal — Inspeção 5S');
+    const p2 = (n) => String(n).padStart(2, '0');
+    const isoDia = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+    const classifDe = (score) => (score >= 90 ? 'excelente' : score >= 70 ? 'organizado' : score >= 50 ? 'desorganizado' : 'critico');
+    const ref = new Date(); // semana exibida (navega de 7 em 7 dias)
+
+    const draw = () => {
+      const seg = new Date(ref);
+      seg.setDate(seg.getDate() - ((seg.getDay() + 6) % 7)); // recua até a segunda-feira
+      const dom = new Date(seg);
+      dom.setDate(dom.getDate() + 6);
+      const ini = isoDia(seg);
+      const fim = isoDia(dom);
+      const hoje = isoDia(new Date());
+
+      const daSemana = inspecoes
+        .filter((i) => {
+          if ((i.status || 'concluida') !== 'concluida') return false;
+          const dia = String(i.concluida_em || i.created_at || '').slice(0, 10);
+          return dia >= ini && dia <= fim;
+        })
+        .sort((a, b) => String(a.concluida_em || a.created_at).localeCompare(String(b.concluida_em || b.created_at)));
+      const comNota = daSemana.filter((i) => typeof i.score === 'number');
+      const media = comNota.length
+        ? Math.round(comNota.reduce((s, i) => s + i.score, 0) / comNota.length)
+        : null;
+
+      body.innerHTML = `
+        <div class="rel-nav">
+          <button class="btn btn-ghost btn-mini" id="rel-ant">‹ Anterior</button>
+          <strong>${fmtDate(ini)} – ${fmtDate(fim)}</strong>
+          <button class="btn btn-ghost btn-mini" id="rel-prox"${fim >= hoje ? ' disabled' : ''}>Próxima ›</button>
+        </div>
+        <div class="s5-placar">
+          <div class="s5-placar-linha">
+            <span>${daSemana.length} inspeç${daSemana.length === 1 ? 'ão' : 'ões'} concluída${daSemana.length === 1 ? '' : 's'} na semana</span>
+            <strong>Média semanal: ${media == null ? '—' : chip5s(classifDe(media), media)}</strong>
+          </div>
+        </div>
+        ${daSemana.length ? daSemana.map((i) => `
+          <div class="s5-hist" data-id="${i.id}">
+            <div class="s5-hist-topo">
+              <strong>${fmtDateTime(i.concluida_em || i.created_at)}</strong>
+              ${chip5s(i.classificacao, i.score)}
+            </div>
+            <div class="muted">${escapeHtml(i.room_name || i.template_nome || 'Inspeção 5S')} · inspecionado por ${escapeHtml(i.inspector || '—')}</div>
+          </div>`).join('')
+        : '<div class="empty">Nenhuma inspeção concluída nesta semana.</div>'}`;
+
+      $('rel-ant').onclick = () => { ref.setDate(ref.getDate() - 7); draw(); };
+      const prox = $('rel-prox');
+      if (prox && !prox.disabled) prox.onclick = () => { ref.setDate(ref.getDate() + 7); draw(); };
+      // clicar numa linha abre o detalhe completo daquela inspeção
+      body.querySelectorAll('.s5-hist').forEach((d) => {
+        d.onclick = () => {
+          const i = inspecoes.find((x) => String(x.id) === d.dataset.id);
+          if (i) detalheInspecao(i);
+        };
+      });
+    };
+    draw();
   }
 
   // Detalhe de uma inspeção concluída (funciona para as antigas e as novas).
