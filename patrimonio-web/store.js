@@ -599,6 +599,44 @@
         ] },
       ],
     },
+    {
+      key: 'seguranca_escritorio',
+      nome: 'Inspeção de Segurança',
+      descricao: 'Segurança do trabalho — combate a incêndio, saídas de emergência, instalações elétricas, primeiros socorros e EPIs.',
+      paginas: [
+        { titulo: 'Inspeção de Segurança - Brazil Transports', tipo: 'cabecalho', campos: CABECALHO_5S },
+        { titulo: 'Combate a incêndio', perguntas: [
+          q5('s2_q1', 'Extintores dentro do prazo de validade?'),
+          q5('s2_q2', 'Extintores com acesso livre e desobstruído?'),
+          q5('s2_q3', 'Sinalização dos extintores visível?'),
+          q5('s2_q4', 'Alarme de incêndio funcionando?'),
+          qFoto('s2_foto'),
+        ] },
+        { titulo: 'Saídas e circulação', perguntas: [
+          q5('s3_q1', 'Saídas de emergência desobstruídas?'),
+          q5('s3_q2', 'Rotas de fuga sinalizadas?'),
+          q5('s3_q3', 'Corredores e passagens livres?'),
+          q5('s3_q4', 'Iluminação de emergência funcionando?'),
+          qFoto('s3_foto'),
+        ] },
+        { titulo: 'Instalações elétricas', perguntas: [
+          q5('s4_q1', 'Tomadas e fiação sem improvisos?'),
+          q5('s4_q2', 'Quadros elétricos fechados e sinalizados?'),
+          q5('s4_q3', 'Cabos organizados, sem risco de tropeço?'),
+          q5('s4_q4', 'Equipamentos elétricos em bom estado (sem fios expostos)?'),
+          qFoto('s4_foto'),
+        ] },
+        { titulo: 'Primeiros socorros e EPIs', perguntas: [
+          q5('s5_q1', 'Caixa de primeiros socorros completa e acessível?'),
+          q5('s5_q2', 'EPIs disponíveis e em bom estado?'),
+          q5('s5_q3', 'Colaboradores utilizando os EPIs exigidos?'),
+          q5('s5_q4', 'Telefones e procedimentos de emergência visíveis?'),
+          { id: 's5_nc', texto: 'Descreva a não conformidade.', tipo: 'texto', condicional: 'se_nao',
+            dica: 'Obrigatório quando alguma resposta for “Não”.' },
+          qFoto('s5_foto'),
+        ] },
+      ],
+    },
   ];
 
   const tplPorKey = (k) => MODELOS_INSPECAO.find((t) => t.key === String(k)) || null;
