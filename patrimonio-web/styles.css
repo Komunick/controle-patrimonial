@@ -118,8 +118,9 @@ a { color: var(--accent-ink); }
   position: sticky;
   top: 0;
   height: 100vh;
+  height: 100dvh; /* celulares: desconta a barra do navegador */
 }
-.brand { padding: 2px 2px 16px; }
+.brand { padding: 2px 2px 16px; flex: none; }
 .brand-logo {
   background: #fff; border-radius: 10px; padding: 11px 13px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, .16);
@@ -131,7 +132,19 @@ a { color: var(--accent-ink); }
   color: rgba(229, 240, 233, .56);
 }
 
-.nav { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; flex: 1; }
+/* O menu cresceu: ele rola sozinho quando a tela é baixa, e o botão de tema e
+   o operador ficam sempre visíveis no rodapé da barra. */
+.nav {
+  display: flex; flex-direction: column; gap: 2px; margin-top: 6px;
+  flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .25) transparent;
+  padding-right: 2px;
+}
+.nav::-webkit-scrollbar { width: 6px; }
+.nav::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .22); border-radius: 999px; }
+.nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .35); }
+.nav::-webkit-scrollbar-track { background: transparent; }
+.nav a { flex: none; }
 .nav a {
   display: flex; align-items: center; gap: 11px;
   padding: 9px 11px; border-radius: var(--radius-sm);
@@ -148,11 +161,11 @@ a { color: var(--accent-ink); }
   margin: 6px 0 4px; padding: 8px 11px; width: 100%;
   border: 1px solid rgba(255, 255, 255, .14); border-radius: var(--radius-sm);
   background: transparent; color: #C2D4C8; font-size: 12.5px; font-weight: 600;
-  text-align: left;
+  text-align: left; flex: none;
 }
 .tema-btn:hover { background: rgba(255, 255, 255, .08); color: #fff; }
 
-.operator { border-top: 1px solid rgba(255, 255, 255, .08); padding-top: 12px; margin-top: 8px; }
+.operator { border-top: 1px solid rgba(255, 255, 255, .08); padding-top: 12px; margin-top: 8px; flex: none; }
 .op-label { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .8px; color: #79828f; margin: 0 6px 4px; }
 .op-name {
   width: 100%; text-align: left; background: rgba(255, 255, 255, .05);
@@ -504,7 +517,8 @@ tbody tr.inv-row.is-conf:hover { background: #ebf6ef; }
 @media (max-width: 880px) {
   .app { grid-template-columns: 1fr; }
   .sidebar {
-    position: fixed; left: 0; top: 0; z-index: 60; width: 240px; height: 100vh;
+    position: fixed; left: 0; top: 0; z-index: 60; width: 240px;
+    height: 100vh; height: 100dvh;
     transform: translateX(-105%); transition: transform .2s;
   }
   .sidebar.open { transform: translateX(0); box-shadow: var(--shadow-lg); }
