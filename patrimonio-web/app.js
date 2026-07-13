@@ -3146,6 +3146,37 @@
       (dump.rooms || []).forEach((r) => roomRows.push([r.name || '', r.notes || '']));
       add('Locais', roomRows);
 
+      const inspRows = [['Realizada', 'Concluída', 'Modelo', 'Local', 'Inspetor', 'Status', 'Pontuação (%)', 'Classificação', 'Sim', 'Não', 'N/A']];
+      (dump.inspections || []).forEach((i) => {
+        const emAndamento = (i.status || 'concluida') === 'em_andamento';
+        inspRows.push([
+          i.created_at || '', i.concluida_em || (emAndamento ? '' : i.created_at) || '',
+          i.template_nome || 'Inspeção 5S', i.room_name || '', i.inspector || '',
+          emAndamento ? 'Em andamento' : 'Concluída',
+          typeof i.score === 'number' ? i.score : '',
+          (CLASSIF_5S[i.classificacao] || {}).rotulo || i.classificacao || '',
+          i.conformes == null ? '' : i.conformes,
+          i.nao_conformes == null ? '' : i.nao_conformes,
+          i.nao_aplicaveis == null ? '' : i.nao_aplicaveis,
+        ]);
+      });
+      add('Inspeções 5S', inspRows);
+
+      const epiRows = [['Data', 'Colaborador', 'Itens entregues', 'Status', 'Assinado em', 'Assinado por', 'Entregue por', 'Observações']];
+      (dump.epi_entregas || []).forEach((e) => {
+        epiRows.push([
+          e.created_at || '', e.person_name || '',
+          (e.itens || []).map((it) => `${it.quantidade}x ${it.nome}${it.ca ? ' (CA ' + it.ca + ')' : ''}`).join('; '),
+          (EPI_STATUS[e.status] || {}).rotulo || e.status || '',
+          e.assinado_em || '', e.assinado_nome || '', e.entregue_por || '', e.obs || '',
+        ]);
+      });
+      add('Entregas de EPI', epiRows);
+
+      const matRows = [['Material', 'Em estoque', 'Estoque mínimo', 'Atualizado em']];
+      (dump.materiais || []).forEach((m) => matRows.push([m.nome || '', m.quantidade == null ? '' : m.quantidade, m.minimo == null ? '' : m.minimo, m.updated_at || m.created_at || '']));
+      add('Materiais', matRows);
+
       const userRows = [['Login', 'Nome', 'Papel', 'Ativo', 'Criado em']];
       (dump.users || []).forEach((u) => userRows.push([u.login, u.name, u.role === 'admin' ? 'Administrador' : 'Operador', u.active === false ? 'Não' : 'Sim', u.created_at || '']));
       add('Operadores', userRows);
