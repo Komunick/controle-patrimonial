@@ -762,3 +762,33 @@ textarea.insp-texto { max-width: 100%; resize: vertical; }
 [data-tema="escuro"] .epi-linkbox { background: #1D3226; }
 .epi-assin { width: 100%; max-width: 420px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .okbig { font-size: 17px; font-weight: 800; margin-bottom: 8px; }
+
+/* ===================== Melhorias para celular =====================
+   Alvos de toque maiores, campos sem zoom automático do iOS e tabelas
+   que rolam na horizontal em vez de espremer/cortar as colunas. */
+@media (max-width: 768px) {
+  /* Fonte >= 16px nos campos evita o zoom automático do iOS ao focar */
+  .field input, .field select, .field textarea,
+  .search input, select.filter, input.filter,
+  .insp-in, textarea.insp-texto, .s5-obs,
+  .epi-item-row input, .epi-item-row select, .epi-nome-outro { font-size: 16px; }
+
+  /* Alvos de toque confortáveis (mín. ~44px) */
+  .btn { min-height: 44px; padding: 11px 16px; }
+  .btn-sm { min-height: 36px; }
+  .icon-btn { width: 40px; height: 40px; font-size: 17px; }
+  .seg-btn { padding: 11px 14px; }
+  .nav a { padding: 12px 12px; font-size: 14.5px; }
+  .fchip { padding: 10px 14px; }
+  .s5-resp { padding: 7px 13px; font-size: 12.5px; }
+
+  /* Tabelas largas rolam na horizontal (mantendo os cantos arredondados) */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* Ações de formulário podem quebrar linha em telas estreitas */
+  .form-actions { flex-wrap: wrap; }
+
+  /* Detalhe e linha de EPI sem estourar a largura */
+  .kv { grid-template-columns: 96px 1fr; gap: 6px 10px; }
+  .epi-item-row { grid-template-columns: 1fr 66px 50px 30px; gap: 5px; }
+}
