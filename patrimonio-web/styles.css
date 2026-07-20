@@ -1,9 +1,12 @@
 :root {
+  /* Design "Patrimonial Enterprise" (projeto Stitch da casa): verde-floresta
+     #124F2C + ouro #D9B303, superficies em camadas tonais, Inter/JetBrains
+     Mono com fallback do sistema. Vocabulario de variaveis preservado. */
   --ink: #0F4226;            /* sidebar — verde-floresta profundo */
   --ink-2: #0B3119;
-  --canvas: #F1F4F2;         /* fundo do app — off-white levemente esverdeado */
+  --canvas: #F5F7F6;         /* fundo do app — cinza-perola frio (Stitch) */
   --surface: #ffffff;
-  --line: #E3E8E4;
+  --line: #E2E8E5;
   --line-strong: #CFD8D1;
   --text: #182A1F;           /* texto — quase-preto esverdeado */
   --muted: #5E6B62;
@@ -17,12 +20,12 @@
   --navy: #173542;           /* AZUL-MARINHO da marca — títulos */
   --danger: #B3261E;
   --danger-soft: #FBE9E7;
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow: 0 1px 2px rgba(16, 33, 24, .06), 0 8px 24px rgba(16, 33, 24, .07);
+  --radius: 8px;
+  --radius-sm: 4px;
+  --shadow: 0 1px 2px rgba(16, 33, 24, .05);
   --shadow-lg: 0 12px 48px rgba(12, 40, 24, .20);
-  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Roboto Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, "SF Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: light;
 }
 
@@ -54,8 +57,8 @@
 /* Botões/realces com fundo verde pedem texto claro que continue legível. */
 [data-tema="escuro"] .btn-primary:hover { background: #4FA173; border-color: #4FA173; }
 /* Tons pastel fixos das plaquetas, pills e tabelas. */
-[data-tema="escuro"] .tag { background: #262E28; color: #CDD6CF; }
-[data-tema="escuro"] .tag.tag-per { border-color: #2F4A3A; }
+[data-tema="escuro"] .tag { background: #2E2812; color: #D9B303; border-color: #4A3D17; }
+[data-tema="escuro"] .tag.tag-per { background: #1D3226; border-color: #2F4A3A; color: #8FD6A0; }
 [data-tema="escuro"] .pill.shift-manha { color: #E0B566; border-color: #4A3D17; }
 [data-tema="escuro"] .pill.shift-noite { color: #A9ABE8; border-color: #3A3B66; background: #232441; }
 [data-tema="escuro"] .pill.shift-integral,
@@ -107,7 +110,7 @@ button { font-family: inherit; cursor: pointer; }
 a { color: var(--accent-ink); }
 
 /* ---------- Layout shell ---------- */
-.app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+.app { display: grid; grid-template-columns: 240px 1fr; min-height: 100vh; }
 
 .sidebar {
   background: linear-gradient(180deg, #124F2C 0%, #0E3F23 62%, #0B3219 100%);
@@ -153,8 +156,13 @@ a { color: var(--accent-ink); }
 }
 .nav a .ico { width: 18px; text-align: center; opacity: .92; font-size: 15px; }
 .nav a:hover { background: rgba(255, 255, 255, .07); color: #fff; }
-.nav a.active { background: rgba(217, 179, 3, .15); color: #fff; box-shadow: inset 3px 0 0 var(--gold-bright); }
-.nav a.active .ico { opacity: 1; color: var(--gold-bright); }
+/* Item ativo em pill dourada solida com texto verde-escuro (tela "Itens" do
+   projeto Stitch) — assinatura do design Patrimonial Enterprise. */
+.nav a.active {
+  background: var(--gold-bright); color: #1C2B22; font-weight: 700;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .18);
+}
+.nav a.active .ico { opacity: 1; color: #1C2B22; }
 .nav .nav-sep { height: 1px; background: rgba(255, 255, 255, .08); margin: 9px 8px; }
 
 .tema-btn {
@@ -188,9 +196,9 @@ a { color: var(--accent-ink); }
 .topbar {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; gap: 14px;
-  background: rgba(241, 244, 242, .85); backdrop-filter: blur(8px);
+  background: rgba(245, 247, 246, .85); backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--line);
-  padding: 14px 26px;
+  padding: 15px 26px;
 }
 .topbar h1 { font-size: 19px; margin: 0; font-weight: 700; letter-spacing: -.2px; color: var(--navy); }
 .topbar-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
@@ -229,8 +237,11 @@ a { color: var(--accent-ink); }
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 16px 18px; box-shadow: var(--shadow);
 }
-.stat .stat-label { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .2px; }
-.stat .stat-value { font-size: 25px; font-weight: 700; margin-top: 6px; letter-spacing: -.4px; }
+.stat .stat-label {
+  color: var(--muted); font-size: 11px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase;
+}
+.stat .stat-value { font-size: 26px; font-weight: 700; margin-top: 6px; letter-spacing: -.5px; }
 .stat .stat-value.mono { font-family: var(--mono); font-size: 22px; }
 .stat.is-accent { border-top: 3px solid var(--accent); }
 .stat.is-gold { border-top: 3px solid var(--gold-bright); }
@@ -254,11 +265,12 @@ select.filter, input.filter {
   background: var(--surface); font-size: 13px; color: var(--text); max-width: 220px;
 }
 
-/* ---------- Tag chip (assinatura: plaqueta de patrimônio) ---------- */
+/* ---------- Tag chip (assinatura: plaqueta de patrimônio) ----------
+   Dourada em mono, como os codigos "BRT-0045" das telas do projeto Stitch. */
 .tag {
   font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .5px;
-  background: #f4f6f8; border: 1px solid var(--line-strong); border-radius: 6px;
-  padding: 2px 8px; color: #2b3340; display: inline-flex; align-items: center; white-space: nowrap;
+  background: var(--gold-soft); border: 1px solid #E9DCB0; border-radius: 6px;
+  padding: 2px 8px; color: var(--gold); display: inline-flex; align-items: center; white-space: nowrap;
 }
 .tag.tag-per { background: var(--accent-soft); border-color: #C4E2D0; color: var(--accent-ink); }
 
@@ -279,8 +291,9 @@ select.filter, input.filter {
 .table-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 table { width: 100%; border-collapse: collapse; }
 thead th {
-  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
-  color: var(--muted-2); font-weight: 700; padding: 11px 16px; background: #fafbfc; border-bottom: 1px solid var(--line);
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); font-weight: 700; padding: 11px 16px; background: #FAFBFA;
+  border-bottom: 1px solid var(--line-strong);
 }
 tbody td { padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 tbody tr:last-child td { border-bottom: none; }
@@ -322,9 +335,10 @@ td .val-cur { color: var(--gold); font-weight: 600; }
   width: 100%; padding: 9px 11px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
   font-size: 13.5px; color: var(--text); background: var(--surface); font-family: inherit;
 }
+/* Foco em OURO — "focus states must use the Gold accent" (design system). */
 .field input:focus, .field select:focus, .field textarea:focus,
 .search input:focus, select.filter:focus {
-  outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent);
+  outline: 2px solid var(--gold-bright); outline-offset: 0; border-color: var(--gold-bright);
 }
 .field textarea { resize: vertical; min-height: 64px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
