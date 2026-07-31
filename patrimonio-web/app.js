@@ -2186,6 +2186,32 @@
     cancelado: { rotulo: 'Cancelado', cls: 'na' },
   };
   const epiPdfUrl = (token) => '/api/epi/pdf?token=' + encodeURIComponent(token);
+  const epiLinkAssinatura = (entrega) => location.origin + '/assinar.html?t=' + encodeURIComponent(entrega.token);
+
+  // Copia com fallback: navigator.clipboard não existe em HTTP fora do localhost.
+  async function copiarTexto(texto) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(texto); return true; } catch (_) { /* tenta o plano B */ }
+    }
+    const ta = document.createElement('textarea');
+    ta.value = texto;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+    ta.remove();
+    return ok;
+  }
+
+  function epiCopiarLink(entrega, campoTexto) {
+    copiarTexto(epiLinkAssinatura(entrega)).then((ok) => {
+      if (ok) { toast('Link copiado! Cole na conversa de WhatsApp do motorista.'); return; }
+      if (campoTexto) { campoTexto.focus(); campoTexto.select(); }
+      toast('Não deu para copiar sozinho — selecione o link no campo e copie com Ctrl+C.', 'err');
+    });
+  }
   // Baixa o PDF via blob gerado pela própria página: evita o alerta de
   // "arquivo perigoso" que o Chrome mostra para downloads diretos em HTTP.
   async function epiBaixarPdf(entrega) {
@@ -2242,7 +2268,7 @@
         ${statCard('Aguardando assinatura', pend, pend ? 'is-warn' : '')}
         ${statCard('Assinadas', ass, ass ? 'is-accent' : '')}
       </div>
-      <div class="toolbar"><div class="search"><input id="epi-q" placeholder="Buscar por colaborador ou EPI…"></div></div>
+      <div class="toolbar"><div class="search"><input id="epi-q" placeholder="Buscar por motorista ou EPI…"></div></div>
       <div class="panel"><div id="epi-rows"></div></div>`;
     $('epi-new').onclick = () => epiForm();
 
@@ -2254,7 +2280,7 @@
       $('epi-rows').innerHTML = !lista.length
         ? '<div class="empty">Nenhuma entrega registrada. Clique em “+ Nova entrega” para gerar o primeiro termo em PDF.</div>'
         : `<div class="table-wrap"><table>
-            <thead><tr><th>Colaborador</th><th>EPIs</th><th>Entrega</th><th>Situação</th><th></th></tr></thead>
+            <thead><tr><th>Motorista</th><th>EPIs</th><th>Entrega</th><th>Situação</th><th></th></tr></thead>
             <tbody>${lista.map((e) => `
               <tr>
                 <td><div class="cell-title">${escapeHtml(e.person_name)}</div></td>
@@ -2310,27 +2336,21 @@
 
   async function epiForm() {
     const body = openDrawer('Nova entrega de EPI');
-    const pessoas = await ensurePeople(true).catch(() => []);
     const materiais = await api('/api/materiais').catch(() => []);
     const estoqueDe = (nome) => materiais.find((m) => String(m.nome).trim().toLowerCase() === String(nome).trim().toLowerCase());
     body.innerHTML = `
-      <div class="field"><label for="epi-pessoa-sel">Colaborador(a) que recebe *</label>
-        <select id="epi-pessoa-sel">
-          <option value="">Escolha o colaborador…</option>
-          ${pessoas.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}${p.department ? ' · ' + escapeHtml(p.department) : ''}</option>`).join('')}
-          <option value="__outro">✎ Outro (digitar)…</option>
-        </select>
-        <input id="epi-pessoa" class="oculta5s" maxlength="80" placeholder="Escreva o nome completo…" style="margin-top:6px">
-        <div class="hint">A lista vem do cadastro de Pessoas. Não achou? Escolha “Outro” e digite.</div></div>
+      <div class="field"><label for="epi-pessoa">Motorista que recebe *</label>
+        <input id="epi-pessoa" maxlength="80" placeholder="Escreva o nome completo do motorista…">
+        <div class="hint">O nome sai no termo em PDF exatamente como for escrito aqui.</div></div>
       <div class="field"><label>EPIs entregues * <span class="muted">(item, CA e quantidade)</span></label>
         <div id="epi-itens">${epiItemRow()}</div>
         <button type="button" class="btn btn-mini btn-ghost" id="epi-mais">+ Adicionar EPI</button></div>
       <div class="field"><label for="epi-obs">Observações</label>
         <textarea id="epi-obs" rows="2" placeholder="Ex.: troca por desgaste; primeira entrega…"></textarea></div>
-      <div class="hint">Ao salvar, o sistema gera o termo em PDF ("termo-epi-NOME.pdf") com a logo da empresa
-        e dá baixa automática na Relação de materiais (itens com o mesmo nome).
-        Envie ao colaborador, receba o PDF assinado de volta e anexe aqui — a entrega é confirmada
-        e o termo fica arquivado no sistema, sem papel.</div>
+      <div class="hint">Ao salvar, o sistema dá baixa automática na Relação de materiais (itens com o
+        mesmo nome) e mostra o link de assinatura para mandar ao motorista pelo WhatsApp — ele assina
+        com o dedo, direto no navegador do celular, sem precisar de leitor de PDF. O termo em PDF
+        também fica disponível para quem preferir colher a assinatura no papel e anexar.</div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="epi-cancelar">Cancelar</button>
         <button class="btn btn-primary" id="epi-salvar">Salvar e gerar PDF</button>
@@ -2357,25 +2377,19 @@
       });
     };
     ligarItens();
-    const selPessoa = $('epi-pessoa-sel');
-    selPessoa.onchange = () => {
-      const eOutro = selPessoa.value === '__outro';
-      $('epi-pessoa').classList.toggle('oculta5s', !eOutro);
-      if (eOutro) $('epi-pessoa').focus();
-    };
     // Enter pula para o próximo campo visível; no último, salva e já gera o PDF.
     body.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter') return;
       const alvo = ev.target;
-      if (!alvo.matches || !alvo.matches('#epi-pessoa-sel, #epi-pessoa, .epi-nome-sel, .epi-nome-outro, .epi-ca, .epi-qt')) return;
+      if (!alvo.matches || !alvo.matches('#epi-pessoa, .epi-nome-sel, .epi-nome-outro, .epi-ca, .epi-qt')) return;
       ev.preventDefault();
-      const campos = [...body.querySelectorAll('#epi-pessoa-sel, #epi-pessoa, .epi-nome-sel, .epi-nome-outro, .epi-ca, .epi-qt')]
+      const campos = [...body.querySelectorAll('#epi-pessoa, .epi-nome-sel, .epi-nome-outro, .epi-ca, .epi-qt')]
         .filter((c) => !c.classList.contains('oculta5s'));
       const prox = campos[campos.indexOf(alvo) + 1];
       if (prox) { prox.focus(); if (prox.select) prox.select(); }
       else $('epi-salvar').click();
     });
-    setTimeout(() => { selPessoa.focus(); }, 50);
+    setTimeout(() => { $('epi-pessoa').focus(); }, 50);
     $('epi-mais').onclick = () => {
       $('epi-itens').insertAdjacentHTML('beforeend', epiItemRow());
       ligarItens();
@@ -2391,15 +2405,8 @@
         };
       }).filter((it) => it.nome);
       const corpo = { itens, obs: $('epi-obs').value.trim() || null };
-      if (selPessoa.value === '__outro') {
-        corpo.person_name = $('epi-pessoa').value.trim();
-        if (!corpo.person_name) { toast('Escreva o nome de quem recebe os EPIs.', 'err'); return; }
-      } else if (selPessoa.value) {
-        corpo.person_id = selPessoa.value;
-      } else {
-        toast('Escolha o colaborador que recebe os EPIs.', 'err');
-        return;
-      }
+      corpo.person_name = $('epi-pessoa').value.trim();
+      if (!corpo.person_name) { toast('Escreva o nome do motorista que recebe os EPIs.', 'err'); return; }
       if (!itens.length) { toast('Escolha ao menos um EPI da lista.', 'err'); return; }
       try {
         const e = await api('/api/epi', { method: 'POST', body: corpo });
@@ -2408,14 +2415,20 @@
         }
         body.innerHTML = `
           <div class="okbig">✅ Entrega registrada!</div>
-          <p class="hint">Baixe o termo em PDF e envie para <b>${escapeHtml(e.person_name)}</b> assinar
-            (por WhatsApp, e-mail ou impresso onde ele estiver). Quando o PDF assinado voltar,
-            anexe em “Ver termo” — a entrega será confirmada e arquivada aqui.</p>
+          <p class="hint">Envie o <b>link de assinatura</b> para <b>${escapeHtml(e.person_name)}</b> pelo WhatsApp:
+            ele abre no navegador de qualquer celular e o motorista assina com o dedo na tela —
+            sem app e sem leitor de PDF. Se preferir papel, baixe o termo em PDF, colha a
+            assinatura e anexe o arquivo de volta em “Ver termo”.</p>
+          <div class="field"><label for="epi-link-txt">Link de assinatura</label>
+            <input id="epi-link-txt" readonly value="${escapeHtml(epiLinkAssinatura(e))}"></div>
           <div class="form-actions">
-            <button class="btn btn-primary" id="epi-pdf2">Baixar termo em PDF</button>
+            <button class="btn btn-primary" id="epi-link2">Copiar link de assinatura</button>
+            <button class="btn btn-ghost" id="epi-pdf2">Baixar termo em PDF</button>
             <button class="btn btn-ghost" id="epi-anexar2">Anexar PDF assinado…</button>
             <button class="btn btn-ghost" id="epi-fechar2">Fechar</button>
           </div>`;
+        $('epi-link2').onclick = () => epiCopiarLink(e, $('epi-link-txt'));
+        $('epi-link-txt').onclick = () => $('epi-link-txt').select();
         $('epi-pdf2').onclick = () => epiBaixarPdf(e);
         $('epi-anexar2').onclick = () => epiAnexarPdf(e, () => { closeDrawer(); rerender(); });
         $('epi-fechar2').onclick = () => { closeDrawer(); rerender(); };
@@ -2452,17 +2465,25 @@
         </div>` : ''}
       ${e.status === 'pendente' ? `
         <div class="field"><label>Como confirmar</label>
-          <div class="hint">Baixe o termo em PDF ("termo-epi-${escapeHtml(e.person_name)}.pdf"), envie ao
-            colaborador para assinar e, quando o arquivo assinado voltar, anexe aqui —
-            a entrega é confirmada na hora e fica arquivada no sistema.</div></div>` : ''}
+          <div class="hint">Mande o link de assinatura ao motorista pelo WhatsApp — ele abre no navegador
+            de qualquer celular e assina com o dedo, sem app nem leitor de PDF. Ou baixe o termo em PDF
+            ("termo-epi-${escapeHtml(e.person_name)}.pdf"), colha a assinatura e anexe o arquivo aqui —
+            nos dois caminhos a entrega é confirmada na hora e fica arquivada no sistema.</div></div>
+        <div class="field"><label for="epi-link-txt3">Link de assinatura</label>
+          <input id="epi-link-txt3" readonly value="${escapeHtml(epiLinkAssinatura(e))}"></div>` : ''}
       <div class="form-actions">
         ${e.status === 'pendente' ? `
-          <button class="btn btn-primary" id="epi-pdf3">Baixar termo em PDF</button>
+          <button class="btn btn-primary" id="epi-link3">Copiar link de assinatura</button>
+          <button class="btn btn-ghost" id="epi-pdf3">Baixar termo em PDF</button>
           <button class="btn btn-ghost" id="epi-anexar3">Anexar PDF assinado…</button>
           ${isAdmin() ? '<button class="btn btn-ghost" id="epi-cancelar3">Cancelar entrega</button>' : ''}` : ''}
         <button class="btn btn-ghost" id="epi-fechar3">Fechar</button>
       </div>`;
     $('epi-fechar3').onclick = closeDrawer;
+    const l3 = $('epi-link3');
+    if (l3) l3.onclick = () => epiCopiarLink(e, $('epi-link-txt3'));
+    const lt3 = $('epi-link-txt3');
+    if (lt3) lt3.onclick = () => lt3.select();
     const p3 = $('epi-pdf3');
     if (p3) p3.onclick = () => epiBaixarPdf(e);
     const a3 = $('epi-anexar3');
