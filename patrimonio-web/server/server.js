@@ -649,6 +649,11 @@ function handleApi(req, res) {
         notifyChange(urlPath, 'POST', operator, req);
         return sendJson(res, 200, { ok: true });
       }
+      // Endereço público dos links de assinatura (túnel/domínio), se configurado.
+      if (urlPath === '/api/epi/link-base' && req.method === 'GET') {
+        const base = String(process.env.PAT_LINK_ASSINATURA || '').trim().replace(/\/+$/, '');
+        return sendJson(res, 200, { base: base || null });
+      }
       // Termo de EPI em PDF para download (pelo token da entrega).
       if (urlPath === '/api/epi/pdf' && req.method === 'GET') {
         const q = new URLSearchParams(req.url.split('?')[1] || '');
@@ -809,8 +814,12 @@ function handleApi(req, res) {
         return sendJson(res, rc.status || 200, rc.ok ? rc.data : (rc.data || { error: 'Erro' }));
       }
       // Todas as demais rotas vão para a lógica compartilhada (store.js).
+      // Atrás do proxy de assinatura/túnel a conexão chega por loopback — o IP
+      // verdadeiro do assinante vem então no X-Forwarded-For.
+      const ipDireto = (req.socket && req.socket.remoteAddress) || '';
+      const ipEncaminhado = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
       const r = db.request(req.method, req.url, body, operator,
-        { ip: (req.socket && req.socket.remoteAddress) || '' });
+        { ip: (/^(::1$|::ffff:127\.|127\.)/.test(ipDireto) && ipEncaminhado) || ipDireto });
       if (r.ok && (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') && !urlPath.startsWith('/api/auth')) {
         notifyChange(urlPath, req.method, operator, req);
       }

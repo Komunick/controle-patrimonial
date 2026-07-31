@@ -2186,7 +2186,11 @@
     cancelado: { rotulo: 'Cancelado', cls: 'na' },
   };
   const epiPdfUrl = (token) => '/api/epi/pdf?token=' + encodeURIComponent(token);
-  const epiLinkAssinatura = (entrega) => location.origin + '/assinar.html?t=' + encodeURIComponent(entrega.token);
+
+  // Endereço público (túnel/domínio, PAT_LINK_ASSINATURA no servidor) para os
+  // links de assinatura; '' = consultado e sem configuração, vale o endereço local.
+  let epiBasePublica = null;
+  const epiLinkAssinatura = (entrega) => (epiBasePublica || location.origin) + '/assinar.html?t=' + encodeURIComponent(entrega.token);
 
   // Copia com fallback: navigator.clipboard não existe em HTTP fora do localhost.
   async function copiarTexto(texto) {
@@ -2258,6 +2262,10 @@
 
   async function renderEpis() {
     setTopbar('<button class="btn btn-primary" id="epi-new">+ Nova entrega</button>');
+    if (epiBasePublica === null) {
+      try { epiBasePublica = String((((await api('/api/epi/link-base')) || {}).base) || ''); }
+      catch (_) { epiBasePublica = ''; }
+    }
     view().innerHTML = '<div class="empty">Carregando…</div>';
     const rows = await api('/api/epi');
     const pend = rows.filter((e) => e.status === 'pendente').length;
