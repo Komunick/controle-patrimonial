@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: controle-patrimonial-relay-epi
+    runtime: node
+    plan: free
+    rootDir: patrimonio-web/relay
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: RELAY_SEGREDO
+        sync: false
