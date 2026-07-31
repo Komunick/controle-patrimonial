@@ -41,30 +41,34 @@ testar do 4G. **Não use no dia a dia**: a URL muda toda vez que o túnel reinic
 
 ### Definitivo (URL fixa, precisa de um domínio na Cloudflare)
 
-Com o domínio (ex.: `komunick.com`) numa conta Cloudflare gratuita:
+Pré-requisito único: o domínio (ex.: `komunick.com`) adicionado a uma conta
+Cloudflare gratuita (o registrador do domínio deve apontar para os nameservers
+que a Cloudflare indicar — mudança única).
 
-```bat
-cloudflared tunnel login
-cloudflared tunnel create assinatura-epi
-cloudflared tunnel route dns assinatura-epi assinatura.komunick.com
-```
+Pelo painel, sem arquivo de configuração:
 
-Crie `C:\Users\<usuario>\.cloudflared\config.yml`:
+1. **one.dash.cloudflare.com** → **Networks → Tunnels → Create a tunnel →
+   Cloudflared**; dê um nome (ex.: `assinatura-epi`).
+2. A tela mostra o comando de instalação para Windows, já com o token do túnel:
 
-```yaml
-tunnel: assinatura-epi
-credentials-file: C:\Users\<usuario>\.cloudflared\<id-do-tunel>.json
-ingress:
-  - hostname: assinatura.komunick.com
-    service: http://127.0.0.1:8791
-  - service: http_status:404
-```
+   ```bat
+   cloudflared service install <TOKEN-LONGO>
+   ```
 
-E instale como serviço do Windows (sobe sozinho com a VM):
+   Rode na VM (como administrador). Isso instala o `cloudflared` como serviço
+   do Windows — sobe sozinho junto com a VM.
+3. Na etapa **Route traffic / Public Hostname**, crie:
+   - Subdomain: `assinatura` · Domain: `komunick.com`
+   - Service: **HTTP** · URL: `127.0.0.1:8791`
 
-```bat
-cloudflared service install
-```
+Pronto: `https://assinatura.komunick.com` passa a cair no proxy. O HTTPS é da
+própria Cloudflare, sem certificado para gerenciar.
+
+(Alternativa por linha de comando, se preferir tudo por terminal:
+`cloudflared tunnel login` → `cloudflared tunnel create assinatura-epi` →
+`cloudflared tunnel route dns assinatura-epi assinatura.komunick.com` →
+`config.yml` com `ingress` apontando para `http://127.0.0.1:8791` →
+`cloudflared service install`.)
 
 ## 3. Avisar o sistema qual é o endereço público
 
