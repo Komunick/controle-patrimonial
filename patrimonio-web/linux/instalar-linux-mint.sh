@@ -181,6 +181,51 @@ install -m 0600 -o root -g root "$TEMPORARIO/relay.env" "$PASTA_ETC/relay.env"
 install -m 0644 -o root -g root "$TEMPORARIO/$SERVICO_SYNC" "/etc/systemd/system/$SERVICO_SYNC"
 if (( SOMENTE_SINCRONIZADOR == 0 )); then
   install -d -m 0750 -o "$USUARIO_SERVICO" -g "$GRUPO_SERVICO" "$PASTA_DADOS"
+
+  # Migra a base legada apenas quando o serviço principal será instalado.
+  # O modo --somente-sincronizador nunca copia, move ou altera dados locais.
+  PASTA_DADOS_ORIGEM="${PAT_DATA_DIR_ORIGEM:-$(cd "$PASTA_WEB/.." && pwd -P)/patrimonio-data}"
+  ARQUIVO_ORIGEM="$PASTA_DADOS_ORIGEM/patrimonio.json"
+  ARQUIVO_DESTINO="$PASTA_DADOS/patrimonio.json"
+  if [[ -s "$ARQUIVO_DESTINO" ]]; then
+    aviso "Já existe base em $ARQUIVO_DESTINO; ela foi PRESERVADA e nada foi copiado."
+  elif [[ -s "$ARQUIVO_ORIGEM" ]]; then
+    info "Base atual encontrada em $ARQUIVO_ORIGEM"
+    "$NODE_BIN" -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$ARQUIVO_ORIGEM" \
+      || erro "A base em $ARQUIVO_ORIGEM não é um JSON válido. Nada foi copiado."
+    CARIMBO="$(date +%Y%m%d-%H%M%S)"
+    COPIA_SEGURANCA="$ARQUIVO_ORIGEM.antes-da-migracao-$CARIMBO"
+    cp -p -- "$ARQUIVO_ORIGEM" "$COPIA_SEGURANCA" \
+      || erro 'Não foi possível criar a cópia de segurança da origem. Abortado.'
+    ARQUIVO_TEMP="$PASTA_DADOS/.patrimonio.json.migracao-$CARIMBO"
+    install -m 0600 -o "$USUARIO_SERVICO" -g "$GRUPO_SERVICO" "$ARQUIVO_ORIGEM" "$ARQUIVO_TEMP" \
+      || erro 'Falha ao copiar a base para o diretório novo. A origem permanece intacta.'
+    cmp -s -- "$ARQUIVO_ORIGEM" "$ARQUIVO_TEMP" \
+      || erro 'A cópia da base não conferiu byte a byte. Nada será iniciado.'
+    mv -- "$ARQUIVO_TEMP" "$ARQUIVO_DESTINO" \
+      || erro 'Não foi possível ativar a cópia conferida. Nada será iniciado.'
+    for subpasta in backups epi-anexos inspecao-fotos; do
+      if [[ -d "$PASTA_DADOS_ORIGEM/$subpasta" ]]; then
+        install -d -m 0750 -o "$USUARIO_SERVICO" -g "$GRUPO_SERVICO" "$PASTA_DADOS/$subpasta"
+        cp -a -n -- "$PASTA_DADOS_ORIGEM/$subpasta/." "$PASTA_DADOS/$subpasta/" \
+          || erro "Falha ao copiar $subpasta. Nada será iniciado."
+      fi
+    done
+    chown -R "$USUARIO_SERVICO:$GRUPO_SERVICO" "$PASTA_DADOS"
+    info 'Base, anexos e backups copiados e conferidos; a origem foi preservada.'
+    info "Cópia de segurança da origem: $COPIA_SEGURANCA"
+  else
+    aviso "Nenhuma base foi encontrada em $ARQUIVO_ORIGEM."
+    if (( SOMENTE_CONFIGURAR == 1 )); then
+      aviso 'Os serviços não serão iniciados; copie a base antes da ativação manual.'
+    else
+      aviso 'Se este NÃO é um servidor novo, pare agora para localizar a base correta.'
+      aviso 'Defina PAT_DATA_DIR_ORIGEM=/caminho/correto ao chamar o instalador.'
+      read -r -p 'Digite NOVO para confirmar uma instalação sem dados anteriores: ' CONFIRMA_VAZIO
+      [[ "$CONFIRMA_VAZIO" == 'NOVO' ]] || erro 'Abortado. Nada foi iniciado nem habilitado.'
+    fi
+  fi
+
   install -m 0600 -o root -g root "$TEMPORARIO/sistema.env" "$PASTA_ETC/sistema.env"
   install -m 0644 -o root -g root "$TEMPORARIO/$SERVICO_SISTEMA" "/etc/systemd/system/$SERVICO_SISTEMA"
 fi
