@@ -106,13 +106,19 @@ define `PAT_LINK_ASSINATURA`, cria a tarefa agendada
 `ControlePatrimonialRelayEpi` (conta SYSTEM, ao iniciar o Windows) e a inicia.
 O log fica em `patrimonio-web\sincroniza-relay.log`.
 
-Reinicie a tarefa/serviço que executa `server.js`, ou reinicie a VM, para o
-sistema local ler a nova `PAT_LINK_ASSINATURA`. Depois confira:
+O instalador **não encerra nem reinicia** o servidor patrimonial ou a VM. A
+`PAT_LINK_ASSINATURA` será lida na próxima inicialização controlada do servidor
+patrimonial, que deve ser feita manualmente pelo administrador em uma janela
+segura. **Nunca reinicie a VM para ativar esta integração.** Depois confira:
 
 ```powershell
 Get-ScheduledTaskInfo -TaskName ControlePatrimonialRelayEpi
 Get-Content .\sincroniza-relay.log -Tail 30
 ```
+
+Para um deploy assistido pelo Claude Cowork, use o prompt seguro completo em
+[DEPLOY-CLAUDE-COWORK.md](DEPLOY-CLAUDE-COWORK.md). Ele proíbe expressamente
+desligar/reiniciar a VM, interromper a porta 8080 ou afetar os demais sistemas.
 
 Para remover apenas o auto-início do sincronizador:
 

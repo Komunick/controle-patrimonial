@@ -60,4 +60,5 @@ Start-ScheduledTask -TaskName 'ControlePatrimonialRelayEpi'
 Write-Host ''
 Write-Host 'Sincronizador instalado e iniciado.' -ForegroundColor Green
 Write-Host "Log: $(Join-Path $pastaWeb 'sincroniza-relay.log')"
-Write-Host 'Reinicie o servidor patrimonial para ele ler PAT_LINK_ASSINATURA.' -ForegroundColor Yellow
+Write-Host 'PAT_LINK_ASSINATURA sera lida na proxima inicializacao controlada do servidor patrimonial.' -ForegroundColor Yellow
+Write-Host 'O instalador nao encerrou nem reiniciou o servidor ou a VM. Nao reinicie a VM para ativar esta integracao.' -ForegroundColor Yellow
