@@ -31,11 +31,30 @@ for arquivo in /etc/controle-patrimonial/sistema.env /etc/controle-patrimonial/r
   fi
 done
 
-if command -v node >/dev/null 2>&1; then
-  if node -e "fetch('http://127.0.0.1:8080/healthz', { signal: AbortSignal.timeout(5000) }).then(async r => { const d = await r.json(); if (!r.ok || d.ok !== true) process.exit(1); }).catch(() => process.exit(1));"; then
-    ok 'Servidor local respondeu corretamente em /healthz.'
+shopt -s nullglob
+NODE_TESTE="$(command -v node 2>/dev/null || true)"
+if [[ -z "$NODE_TESTE" ]]; then
+  CANDIDATOS_NODE=("$HOME"/.nvm/versions/node/v24.*/bin/node "$HOME"/.nvm/versions/node/v22.*/bin/node)
+  if (( ${#CANDIDATOS_NODE[@]} > 0 )); then
+    NODE_TESTE="$(printf '%s\n' "${CANDIDATOS_NODE[@]}" | sort -V | tail -1)"
+  fi
+fi
+if [[ -n "$NODE_TESTE" && -x "$NODE_TESTE" ]]; then
+  if "$NODE_TESTE" -e "
+    async function validar() {
+      try {
+        const h = await fetch('http://127.0.0.1:8080/healthz', { signal: AbortSignal.timeout(5000) });
+        if (h.ok && (await h.json()).ok === true) return;
+      } catch (_) { /* tenta a rota compatível com a instalação legada */ }
+      const r = await fetch('http://127.0.0.1:8080/api/epi/link-base', { signal: AbortSignal.timeout(5000) });
+      const d = await r.json();
+      if (!r.ok || !Object.prototype.hasOwnProperty.call(d, 'base')) process.exit(1);
+    }
+    validar().catch(() => process.exit(1));
+  "; then
+    ok 'Servidor local respondeu como Controle Patrimonial.'
   else
-    falha 'Servidor local não respondeu corretamente em /healthz.'
+    falha 'Servidor local não respondeu como Controle Patrimonial.'
   fi
 else
   falha 'Node.js não foi encontrado no PATH.'

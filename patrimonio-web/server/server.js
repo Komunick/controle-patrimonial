@@ -18,6 +18,7 @@ const db = require('./db');
 const PORT = parseInt(process.env.PORT, 10) || 8080;
 const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = path.join(__dirname, '..'); // pasta patrimonio-web (arquivos do app)
+const EPI_RELAY_PUBLICO_PADRAO = 'https://controle-patrimonial-relay-epi.onrender.com';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -652,7 +653,10 @@ function handleApi(req, res) {
       // Endereço público dos links de assinatura (túnel/domínio), se configurado.
       if (urlPath === '/api/epi/link-base' && req.method === 'GET') {
         const base = String(process.env.PAT_LINK_ASSINATURA || '').trim().replace(/\/+$/, '');
-        return sendJson(res, 200, { base: base || null });
+        return sendJson(res, 200, {
+          base: base || EPI_RELAY_PUBLICO_PADRAO,
+          origem: base ? 'ambiente' : 'relay-padrao',
+        });
       }
       // Termo de EPI em PDF para download (pelo token da entrega).
       if (urlPath === '/api/epi/pdf' && req.method === 'GET') {

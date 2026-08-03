@@ -2186,11 +2186,12 @@
     cancelado: { rotulo: 'Cancelado', cls: 'na' },
   };
   const epiPdfUrl = (token) => '/api/epi/pdf?token=' + encodeURIComponent(token);
+  const EPI_RELAY_PUBLICO_PADRAO = 'https://controle-patrimonial-relay-epi.onrender.com';
 
   // Endereço público (túnel/domínio, PAT_LINK_ASSINATURA no servidor) para os
-  // links de assinatura; '' = consultado e sem configuração, vale o endereço local.
+  // links de assinatura. Nunca usamos location.origin: a porta 8080 é local.
   let epiBasePublica = null;
-  const epiLinkAssinatura = (entrega) => (epiBasePublica || location.origin) + '/assinar.html?t=' + encodeURIComponent(entrega.token);
+  const epiLinkAssinatura = (entrega) => (epiBasePublica || EPI_RELAY_PUBLICO_PADRAO) + '/assinar.html?t=' + encodeURIComponent(entrega.token);
 
   // Copia com fallback: navigator.clipboard não existe em HTTP fora do localhost.
   async function copiarTexto(texto) {
@@ -2263,8 +2264,8 @@
   async function renderEpis() {
     setTopbar('<button class="btn btn-primary" id="epi-new">+ Nova entrega</button>');
     if (epiBasePublica === null) {
-      try { epiBasePublica = String((((await api('/api/epi/link-base')) || {}).base) || ''); }
-      catch (_) { epiBasePublica = ''; }
+      try { epiBasePublica = String((((await api('/api/epi/link-base')) || {}).base) || EPI_RELAY_PUBLICO_PADRAO); }
+      catch (_) { epiBasePublica = EPI_RELAY_PUBLICO_PADRAO; }
     }
     view().innerHTML = '<div class="empty">Carregando…</div>';
     const rows = await api('/api/epi');

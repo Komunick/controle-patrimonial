@@ -9,19 +9,21 @@ readonly SERVICO_SYNC='controle-patrimonial-relay-sync.service'
 readonly PASTA_ETC='/etc/controle-patrimonial'
 readonly PASTA_DADOS='/var/lib/controle-patrimonial'
 
-RELAY_URL_INFORMADA=''
+RELAY_URL_INFORMADA='https://controle-patrimonial-relay-epi.onrender.com'
 SISTEMA_URL='http://127.0.0.1:8080'
 USUARIO_SERVICO="${SUDO_USER:-}"
 SOMENTE_CONFIGURAR=0
+SOMENTE_SINCRONIZADOR=0
 
 uso() {
   printf '%s\n' \
     'Uso: sudo bash ./linux/instalar-linux-mint.sh [opções]' \
     '' \
-    '  --relay-url URL       URL HTTPS pública do relay' \
+    '  --relay-url URL       URL HTTPS pública do relay; usa o relay oficial por padrão' \
     '  --sistema-url URL     URL local; padrão http://127.0.0.1:8080' \
     '  --usuario USUARIO     usuário sem privilégios que executará o Node' \
     '  --somente-configurar  instala arquivos, mas não inicia serviços' \
+    '  --somente-sincronizador  preserva o servidor existente e instala apenas o sync' \
     '  --ajuda               mostra esta ajuda' \
     '' \
     'O segredo sempre é solicitado sem aparecer na tela.'
@@ -61,6 +63,10 @@ while (( $# > 0 )); do
       SOMENTE_CONFIGURAR=1
       shift
       ;;
+    --somente-sincronizador)
+      SOMENTE_SINCRONIZADOR=1
+      shift
+      ;;
     --ajuda|-h)
       uso
       exit 0
@@ -80,6 +86,7 @@ source /etc/os-release
 command -v systemctl >/dev/null 2>&1 || erro 'systemctl não foi encontrado.'
 command -v install >/dev/null 2>&1 || erro 'O comando install não foi encontrado.'
 command -v ss >/dev/null 2>&1 || erro 'O comando ss é obrigatório para verificar a porta 8080 com segurança.'
+command -v getent >/dev/null 2>&1 || erro 'O comando getent não foi encontrado.'
 
 [[ -n "$USUARIO_SERVICO" ]] || erro 'Informe --usuario quando executar diretamente como root.'
 [[ "$USUARIO_SERVICO" =~ ^[a-z_][a-z0-9_.-]*[$]?$ ]] || erro 'Nome de usuário inválido.'
@@ -87,6 +94,8 @@ id "$USUARIO_SERVICO" >/dev/null 2>&1 || erro "O usuário $USUARIO_SERVICO não 
 (( $(id -u "$USUARIO_SERVICO") != 0 )) || erro 'O serviço não pode executar como root. Informe um usuário Linux comum.'
 GRUPO_SERVICO="$(id -gn "$USUARIO_SERVICO")"
 [[ "$GRUPO_SERVICO" =~ ^[a-z_][a-z0-9_.-]*[$]?$ ]] || erro 'Nome do grupo primário inválido.'
+HOME_SERVICO="$(getent passwd "$USUARIO_SERVICO" | cut -d: -f6)"
+[[ -n "$HOME_SERVICO" && -d "$HOME_SERVICO" ]] || erro "Não foi possível localizar a pasta pessoal de $USUARIO_SERVICO."
 
 PASTA_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PASTA_WEB="$(cd "$PASTA_SCRIPT/.." && pwd -P)"
@@ -94,7 +103,16 @@ PASTA_WEB="$(cd "$PASTA_SCRIPT/.." && pwd -P)"
 [[ -f "$PASTA_WEB/server/server.js" ]] || erro 'server/server.js não foi encontrado.'
 [[ -f "$PASTA_WEB/server/sincroniza-relay.js" ]] || erro 'server/sincroniza-relay.js não foi encontrado.'
 
-NODE_BIN="$(command -v node || true)"
+shopt -s nullglob
+CANDIDATOS_NODE=("$HOME_SERVICO"/.nvm/versions/node/v24.*/bin/node)
+if (( ${#CANDIDATOS_NODE[@]} == 0 )); then
+  CANDIDATOS_NODE=("$HOME_SERVICO"/.nvm/versions/node/v22.*/bin/node)
+fi
+NODE_BIN=''
+if (( ${#CANDIDATOS_NODE[@]} > 0 )); then
+  NODE_BIN="$(printf '%s\n' "${CANDIDATOS_NODE[@]}" | sort -V | tail -1)"
+fi
+if [[ -z "$NODE_BIN" ]]; then NODE_BIN="$(command -v node || true)"; fi
 [[ -n "$NODE_BIN" ]] || erro 'Node.js não foi encontrado. Instale uma versão LTS compatível antes de continuar.'
 NODE_BIN="$(readlink -f "$NODE_BIN")"
 [[ -x "$NODE_BIN" ]] || erro "Node.js não é executável: $NODE_BIN"
@@ -144,7 +162,11 @@ GRUPO_SED="$(escapar_sed "$GRUPO_SERVICO")"
 PASTA_SED="$(escapar_sed "$PASTA_WEB")"
 NODE_SED="$(escapar_sed "$NODE_BIN")"
 
-for modelo in controle-patrimonial.service controle-patrimonial-relay-sync.service; do
+MODELOS=(controle-patrimonial-relay-sync.service)
+if (( SOMENTE_SINCRONIZADOR == 0 )); then
+  MODELOS=(controle-patrimonial.service controle-patrimonial-relay-sync.service)
+fi
+for modelo in "${MODELOS[@]}"; do
   sed \
     -e "s|@@USUARIO@@|$USUARIO_SED|g" \
     -e "s|@@GRUPO@@|$GRUPO_SED|g" \
@@ -154,12 +176,14 @@ for modelo in controle-patrimonial.service controle-patrimonial-relay-sync.servi
 done
 
 # Somente as pastas e os arquivos próprios desta integração são instalados.
-install -d -m 0750 -o "$USUARIO_SERVICO" -g "$GRUPO_SERVICO" "$PASTA_DADOS"
 install -d -m 0750 -o root -g "$GRUPO_SERVICO" "$PASTA_ETC"
-install -m 0600 -o root -g root "$TEMPORARIO/sistema.env" "$PASTA_ETC/sistema.env"
 install -m 0600 -o root -g root "$TEMPORARIO/relay.env" "$PASTA_ETC/relay.env"
-install -m 0644 -o root -g root "$TEMPORARIO/$SERVICO_SISTEMA" "/etc/systemd/system/$SERVICO_SISTEMA"
 install -m 0644 -o root -g root "$TEMPORARIO/$SERVICO_SYNC" "/etc/systemd/system/$SERVICO_SYNC"
+if (( SOMENTE_SINCRONIZADOR == 0 )); then
+  install -d -m 0750 -o "$USUARIO_SERVICO" -g "$GRUPO_SERVICO" "$PASTA_DADOS"
+  install -m 0600 -o root -g root "$TEMPORARIO/sistema.env" "$PASTA_ETC/sistema.env"
+  install -m 0644 -o root -g root "$TEMPORARIO/$SERVICO_SISTEMA" "/etc/systemd/system/$SERVICO_SISTEMA"
+fi
 
 systemctl daemon-reload
 
@@ -167,39 +191,69 @@ porta_8080_ocupada() {
   ss -H -ltn | awk '$4 ~ /:8080$/ { encontrada=1 } END { exit encontrada ? 0 : 1 }'
 }
 
-SISTEMA_PRONTO=0
-if (( SOMENTE_CONFIGURAR == 1 )); then
-  info 'Arquivos instalados. --somente-configurar impediu a habilitação no boot e qualquer inicialização.'
-elif systemctl is-active --quiet "$SERVICO_SISTEMA"; then
-  SISTEMA_PRONTO=1
-  aviso "$SERVICO_SISTEMA já estava ativo e NÃO foi reiniciado."
-  aviso 'As novas variáveis serão lidas apenas em uma reinicialização controlada desse serviço pelo administrador.'
-elif porta_8080_ocupada; then
-  aviso 'A porta 8080 já está ocupada. Nenhum processo foi encerrado e os serviços não serão iniciados.'
-  aviso 'Identifique o serviço existente e escolha uma janela segura; nunca reinicie a VM para resolver isso.'
-else
-  systemctl start "$SERVICO_SISTEMA"
-  systemctl is-active --quiet "$SERVICO_SISTEMA" || erro "O serviço não iniciou. Consulte: journalctl -u $SERVICO_SISTEMA"
-  SISTEMA_PRONTO=1
-  info "$SERVICO_SISTEMA iniciado sem interromper outros processos."
-fi
+sistema_local_compativel() {
+  SISTEMA_URL_TESTE="$SISTEMA_URL" "$NODE_BIN" -e "
+    const base = process.env.SISTEMA_URL_TESTE;
+    fetch(new URL('/api/epi/link-base', base + '/'), { signal: AbortSignal.timeout(5000) })
+      .then(async (res) => {
+        const dados = await res.json();
+        if (!res.ok || !Object.prototype.hasOwnProperty.call(dados, 'base')) process.exit(1);
+      })
+      .catch(() => process.exit(1));
+  " >/dev/null 2>&1
+}
 
-if (( SOMENTE_CONFIGURAR == 0 && SISTEMA_PRONTO == 1 )); then
-  if systemctl is-active --quiet "$SERVICO_SYNC"; then
-    aviso "$SERVICO_SYNC já estava ativo e NÃO foi reiniciado."
+if (( SOMENTE_SINCRONIZADOR == 1 )); then
+  if (( SOMENTE_CONFIGURAR == 1 )); then
+    info 'Somente a unidade do sincronizador foi instalada; ela não foi iniciada nem habilitada.'
   else
-    systemctl start "$SERVICO_SYNC"
-    systemctl is-active --quiet "$SERVICO_SYNC" || erro "O sincronizador não iniciou. Consulte: journalctl -u $SERVICO_SYNC"
-    info "$SERVICO_SYNC iniciado."
+    sistema_local_compativel || erro "O sistema patrimonial não respondeu em $SISTEMA_URL. O servidor existente foi preservado."
+    if systemctl is-active --quiet "$SERVICO_SYNC"; then
+      aviso "$SERVICO_SYNC já estava ativo e NÃO foi reiniciado."
+    else
+      systemctl start "$SERVICO_SYNC"
+      systemctl is-active --quiet "$SERVICO_SYNC" || erro "O sincronizador não iniciou. Consulte: journalctl -u $SERVICO_SYNC"
+      info "$SERVICO_SYNC iniciado ao lado do servidor existente, sem interrompê-lo."
+    fi
+    systemctl enable "$SERVICO_SYNC" >/dev/null
+    info 'Somente o sincronizador foi habilitado para o próximo boot administrado.'
   fi
-  # Só habilitamos o boot depois que a situação atual foi considerada segura.
-  systemctl enable "$SERVICO_SISTEMA" "$SERVICO_SYNC" >/dev/null
-  info 'Os dois serviços foram habilitados para o próximo boot administrado.'
+else
+  SISTEMA_PRONTO=0
+  if (( SOMENTE_CONFIGURAR == 1 )); then
+    info 'Arquivos instalados. --somente-configurar impediu a habilitação no boot e qualquer inicialização.'
+  elif systemctl is-active --quiet "$SERVICO_SISTEMA"; then
+    SISTEMA_PRONTO=1
+    aviso "$SERVICO_SISTEMA já estava ativo e NÃO foi reiniciado."
+    aviso 'As novas variáveis serão lidas apenas em uma reinicialização controlada desse serviço pelo administrador.'
+  elif porta_8080_ocupada; then
+    aviso 'A porta 8080 já está ocupada. Nenhum processo foi encerrado e os serviços não serão iniciados.'
+    aviso 'Se for o Controle Patrimonial legado, use --somente-sincronizador; nunca reinicie a VM para resolver isso.'
+  else
+    systemctl start "$SERVICO_SISTEMA"
+    systemctl is-active --quiet "$SERVICO_SISTEMA" || erro "O serviço não iniciou. Consulte: journalctl -u $SERVICO_SISTEMA"
+    SISTEMA_PRONTO=1
+    info "$SERVICO_SISTEMA iniciado sem interromper outros processos."
+  fi
+
+  if (( SOMENTE_CONFIGURAR == 0 && SISTEMA_PRONTO == 1 )); then
+    if systemctl is-active --quiet "$SERVICO_SYNC"; then
+      aviso "$SERVICO_SYNC já estava ativo e NÃO foi reiniciado."
+    else
+      systemctl start "$SERVICO_SYNC"
+      systemctl is-active --quiet "$SERVICO_SYNC" || erro "O sincronizador não iniciou. Consulte: journalctl -u $SERVICO_SYNC"
+      info "$SERVICO_SYNC iniciado."
+    fi
+    # Só habilitamos o boot depois que a situação atual foi considerada segura.
+    systemctl enable "$SERVICO_SISTEMA" "$SERVICO_SYNC" >/dev/null
+    info 'Os dois serviços foram habilitados para o próximo boot administrado.'
+  fi
 fi
 
 info ''
 info 'Instalação Linux Mint concluída dentro do escopo autorizado.'
-info "Dados: $PASTA_DADOS"
+if (( SOMENTE_SINCRONIZADOR == 0 )); then info "Dados: $PASTA_DADOS"; fi
 info "Configuração protegida: $PASTA_ETC"
+info "Relay público: $RELAY_URL_INFORMADA"
 info 'Logs: journalctl -u controle-patrimonial.service -u controle-patrimonial-relay-sync.service'
 info 'A VM não foi desligada ou reiniciada; firewall, rede e outros serviços não foram alterados.'
