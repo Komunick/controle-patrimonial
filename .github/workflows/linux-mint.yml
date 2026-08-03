@@ -1,0 +1,67 @@
+name: Compatibilidade Linux Mint
+
+on:
+  pull_request:
+    paths:
+      - 'patrimonio-web/**'
+      - 'render.yaml'
+      - '.github/workflows/linux-mint.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'patrimonio-web/**'
+      - 'render.yaml'
+      - '.github/workflows/linux-mint.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validar-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Usar Node.js 24 LTS
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Validar JavaScript
+        run: |
+          node --check patrimonio-web/server/server.js
+          node --check patrimonio-web/server/db.js
+          node --check patrimonio-web/server/sincroniza-relay.js
+          node --check patrimonio-web/relay/server.js
+
+      - name: Validar scripts Linux Mint
+        run: |
+          bash -n patrimonio-web/linux/instalar-linux-mint.sh
+          bash -n patrimonio-web/linux/verificar-linux-mint.sh
+
+      - name: Validar unidades systemd
+        run: |
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$temp_dir"' EXIT
+          node_bin="$(command -v node)"
+          web_dir="$GITHUB_WORKSPACE/patrimonio-web"
+          for unit in controle-patrimonial.service controle-patrimonial-relay-sync.service; do
+            sed \
+              -e "s|@@USUARIO@@|$(id -un)|g" \
+              -e "s|@@GRUPO@@|$(id -gn)|g" \
+              -e "s|@@PASTA_WEB@@|$web_dir|g" \
+              -e "s|@@NODE@@|$node_bin|g" \
+              "patrimonio-web/linux/$unit.in" > "$temp_dir/$unit"
+          done
+          sudo install -d -m 0755 /etc/controle-patrimonial /var/lib/controle-patrimonial
+          sudo install -m 0600 /dev/null /etc/controle-patrimonial/sistema.env
+          sudo install -m 0600 /dev/null /etc/controle-patrimonial/relay.env
+          systemd-analyze verify \
+            "$temp_dir/controle-patrimonial.service" \
+            "$temp_dir/controle-patrimonial-relay-sync.service"
+
+      - name: Executar testes
+        working-directory: patrimonio-web/relay
+        run: npm test

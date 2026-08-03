@@ -204,7 +204,7 @@ Antes de alterar qualquer coisa:
 1. confirme a pasta conectada;
 2. execute `git status` somente para leitura;
 3. identifique alterações não relacionadas e não as inclua/descarte/mova;
-4. confirme Node.js 18 ou mais recente;
+4. confirme Node.js 22 LTS ou 24 LTS, preferencialmente 24;
 5. determine se este computador é a VM do sistema;
 6. consulte `http://127.0.0.1:8080` somente para leitura;
 7. não reinicie/interrompa o processo se a consulta falhar;
@@ -212,7 +212,7 @@ Antes de alterar qualquer coisa:
 9. não acesse a VM por rota pública;
 10. não instale/atualize Node.js ou PATH global.
 
-Se Node 18+ não estiver disponível, informe e pare. Apresente plano curto com
+Se Node 22/24 LTS não estiver disponível, informe e pare. Apresente plano curto com
 estado da PR/pasta, alterações locais, Node, acessos GitHub/Render/VM, porta
 8080, intervenções humanas e confirmação de que não haverá interrupção.
 
