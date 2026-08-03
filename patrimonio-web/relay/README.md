@@ -29,6 +29,9 @@ sistema local :8080 <- sincroniza-relay.js <- assinatura guardada no relay
 
 `PAT_LINK_ASSINATURA` deve receber o mesmo valor de `RELAY_URL`. Assim o botão
 **Copiar link de assinatura** gera `https://seu-relay/assinar.html?t=<token>`.
+Neste repositório, se a variável estiver ausente, a interface usa o relay público
+`https://controle-patrimonial-relay-epi.onrender.com` e nunca gera um link da
+porta 8080.
 
 ## Teste local
 
