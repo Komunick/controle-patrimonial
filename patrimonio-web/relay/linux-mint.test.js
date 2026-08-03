@@ -60,7 +60,6 @@ test('servidor local oferece healthcheck e encerra por SIGTERM', {
       HOST: '127.0.0.1',
       PORT: String(porta),
       PAT_DATA_DIR: temporario,
-      PAT_LINK_ASSINATURA: 'https://relay.example.test',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
