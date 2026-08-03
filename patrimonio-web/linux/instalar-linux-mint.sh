@@ -156,6 +156,59 @@ done
 # Somente as pastas e os arquivos próprios desta integração são instalados.
 install -d -m 0750 -o "$USUARIO_SERVICO" -g "$GRUPO_SERVICO" "$PASTA_DADOS"
 install -d -m 0750 -o root -g "$GRUPO_SERVICO" "$PASTA_ETC"
+
+# ---------------------------------------------------------------------
+# MIGRAÇÃO DA BASE EXISTENTE
+#
+# A unit define PAT_DATA_DIR=/var/lib/controle-patrimonial e endurece o
+# serviço com ProtectHome=read-only. Sem copiar a base atual para lá, o
+# sistema subiria com um patrimonio.json vazio e todo o patrimônio, os
+# colaboradores e os termos de EPI sumiriam da tela — o arquivo antigo
+# continuaria no disco, porém invisível para a aplicação.
+#
+# Esta etapa NUNCA sobrescreve dados: se o destino já tiver base, ela é
+# preservada. Nada é apagado da origem em nenhuma hipótese.
+# ---------------------------------------------------------------------
+PASTA_DADOS_ORIGEM="${PAT_DATA_DIR_ORIGEM:-$(cd "$PASTA_WEB/.." && pwd -P)/patrimonio-data}"
+ARQUIVO_ORIGEM="$PASTA_DADOS_ORIGEM/patrimonio.json"
+ARQUIVO_DESTINO="$PASTA_DADOS/patrimonio.json"
+
+if [[ -s "$ARQUIVO_DESTINO" ]]; then
+  aviso "Já existe base em $ARQUIVO_DESTINO; ela foi PRESERVADA e nada foi copiado."
+elif [[ -s "$ARQUIVO_ORIGEM" ]]; then
+  info "Base atual encontrada em $ARQUIVO_ORIGEM"
+
+  "$NODE_BIN" -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$ARQUIVO_ORIGEM" \
+    || erro "A base em $ARQUIVO_ORIGEM não é um JSON válido. Nada foi copiado; verifique antes de prosseguir."
+
+  CARIMBO="$(date +%Y%m%d-%H%M%S)"
+  COPIA_SEGURANCA="$ARQUIVO_ORIGEM.antes-da-migracao-$CARIMBO"
+  cp -p -- "$ARQUIVO_ORIGEM" "$COPIA_SEGURANCA" \
+    || erro 'Não foi possível criar a cópia de segurança da base. Abortado sem alterar nada.'
+  info "Cópia de segurança da origem: $COPIA_SEGURANCA"
+
+  cp -p -- "$ARQUIVO_ORIGEM" "$ARQUIVO_DESTINO" \
+    || erro 'Falha ao copiar a base para o novo diretório. Abortado.'
+
+  cmp -s -- "$ARQUIVO_ORIGEM" "$ARQUIVO_DESTINO" \
+    || erro 'A cópia da base não conferiu byte a byte. Abortado; a origem permanece intacta.'
+  info 'Base copiada e conferida byte a byte.'
+
+  if [[ -d "$PASTA_DADOS_ORIGEM/backups" ]]; then
+    install -d -m 0750 -o "$USUARIO_SERVICO" -g "$GRUPO_SERVICO" "$PASTA_DADOS/backups"
+    cp -pr -- "$PASTA_DADOS_ORIGEM/backups/." "$PASTA_DADOS/backups/" 2>/dev/null || true
+    info 'Backups históricos copiados.'
+  fi
+
+  chown -R "$USUARIO_SERVICO:$GRUPO_SERVICO" "$PASTA_DADOS"
+  info "A origem $PASTA_DADOS_ORIGEM foi mantida intacta como segunda via."
+else
+  aviso "Nenhuma base foi encontrada em $ARQUIVO_ORIGEM."
+  aviso 'Se este NÃO é um servidor novo, pare agora: iniciar o serviço criaria uma base vazia.'
+  aviso 'Use --sistema-url/--relay-url com PAT_DATA_DIR_ORIGEM=/caminho/correto para apontar a base real.'
+  read -r -p 'Digite NOVO para confirmar que é uma instalação sem dados anteriores: ' CONFIRMA_VAZIO
+  [[ "$CONFIRMA_VAZIO" == 'NOVO' ]] || erro 'Abortado a pedido. Nada foi iniciado nem habilitado.'
+fi
 install -m 0600 -o root -g root "$TEMPORARIO/sistema.env" "$PASTA_ETC/sistema.env"
 install -m 0600 -o root -g root "$TEMPORARIO/relay.env" "$PASTA_ETC/relay.env"
 install -m 0644 -o root -g root "$TEMPORARIO/$SERVICO_SISTEMA" "/etc/systemd/system/$SERVICO_SISTEMA"
