@@ -1,0 +1,13 @@
+{
+  "name": "controle-patrimonial-relay-epi",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Relay público para assinatura de termos de entrega de EPI",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}

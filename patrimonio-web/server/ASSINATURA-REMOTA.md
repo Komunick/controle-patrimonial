@@ -1,5 +1,9 @@
 # Assinatura de EPI fora da rede local
 
+> Este arquivo descreve a alternativa por túnel direto até a VM. Para a
+> arquitetura com relay na nuvem e sincronização de saída — sem conexão de
+> entrada na VM — consulte [relay/README.md](../relay/README.md).
+
 Permite que o motorista abra o link de assinatura **de qualquer lugar** (4G, casa,
 estrada), sem VPN e sem abrir porta no roteador. O caminho é:
 
