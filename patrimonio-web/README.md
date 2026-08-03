@@ -1,5 +1,11 @@
 # Controle Patrimonial — versão Web (100% navegador)
 
+> Para operar com banco compartilhado e servidor Node em uma VM VirtualBox com
+> Linux Mint, use o pacote de produção em
+> [`linux/README.md`](linux/README.md). Ele inclui serviços `systemd`,
+> sincronização com o relay público e instalação sem reiniciar a VM ou afetar
+> outros sistemas.
+
 Sistema de controle de patrimônio com **QR Code** que roda **inteiramente no navegador**: não precisa de Node, servidor nem instalação. Basta abrir o `index.html`.
 
 O backend foi substituído por uma camada de dados em JavaScript que guarda tudo no **armazenamento local do navegador** (`localStorage`). O QR Code e a planilha de backup também são gerados no próprio navegador.

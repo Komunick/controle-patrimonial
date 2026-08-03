@@ -32,7 +32,7 @@ sistema local :8080 <- sincroniza-relay.js <- assinatura guardada no relay
 
 ## Teste local
 
-Use Node.js 18 ou mais recente:
+Use Node.js 24 LTS:
 
 ```powershell
 cd patrimonio-web\relay
@@ -126,6 +126,18 @@ Para remover apenas o auto-início do sincronizador:
 Stop-ScheduledTask -TaskName ControlePatrimonialRelayEpi
 Unregister-ScheduledTask -TaskName ControlePatrimonialRelayEpi -Confirm:$false
 ```
+
+## Instalar na VM VirtualBox com Linux Mint
+
+O backend local e o sincronizador também podem operar como dois serviços
+`systemd`, sem scripts do Windows. O instalador Linux não reinicia a VM, não
+encerra processos e não altera firewall, rede ou outros serviços. Se a porta
+8080 estiver ocupada, ele preserva o processo existente e não força a ativação.
+
+As instruções completas estão em
+[`../linux/README.md`](../linux/README.md). Para deploy assistido use somente o
+prompt específico
+[`../linux/DEPLOY-CLAUDE-COWORK-LINUX-MINT.md`](../linux/DEPLOY-CLAUDE-COWORK-LINUX-MINT.md).
 
 ## Contrato HTTP
 

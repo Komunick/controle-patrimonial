@@ -833,6 +833,9 @@ function handleApi(req, res) {
 
 const server = http.createServer((req, res) => {
   const urlPath = req.url.split('?')[0];
+  if (urlPath === '/healthz' && req.method === 'GET') {
+    return sendJson(res, 200, { ok: true });
+  }
   if (urlPath === '/api/events' && req.method === 'GET') {
     return handleSSE(req, res);
   }
@@ -850,6 +853,30 @@ server.listen(PORT, HOST, () => {
   console.log(`[Controle Patrimonial] dados em: ${db.DATA_FILE}`);
   console.log(`[Controle Patrimonial] backups em: ${db.BACKUP_DIR}`);
 });
+
+// O systemd envia SIGTERM ao parar somente este serviço. Encerramos a escuta
+// de forma controlada; as gravações do banco já são síncronas e atômicas.
+let encerramentoEmAndamento = false;
+function encerrarServidor(sinal) {
+  if (encerramentoEmAndamento) return;
+  encerramentoEmAndamento = true;
+  console.log(`[Controle Patrimonial] ${sinal} recebido; encerrando o servidor.`);
+  const limite = setTimeout(() => {
+    console.error('[Controle Patrimonial] limite de encerramento atingido.');
+    process.exit(1);
+  }, 10 * 1000);
+  limite.unref();
+  server.close((erro) => {
+    clearTimeout(limite);
+    if (erro) {
+      console.error('[Controle Patrimonial] falha ao encerrar:', erro);
+      process.exit(1);
+    }
+    process.exit(0);
+  });
+}
+process.once('SIGINT', () => encerrarServidor('SIGINT'));
+process.once('SIGTERM', () => encerrarServidor('SIGTERM'));
 
 // Snapshot automático periódico (rede de segurança adicional).
 const SNAP_MS = parseInt(process.env.PAT_SNAPSHOT_MS, 10) || 6 * 60 * 60 * 1000; // 6 h
