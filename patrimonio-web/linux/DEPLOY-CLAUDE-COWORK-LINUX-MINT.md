@@ -325,6 +325,8 @@ Somente com autorização explícita do administrador, use um termo de teste:
 1. crie ou selecione um termo pendente no sistema;
 2. aguarde o ciclo de até 60 segundos;
 3. confirme que o link copiado usa o domínio HTTPS do relay;
+   rejeite qualquer link com `:8080`, `localhost`, IP direto ou faixa privada/
+   Tailscale como `100.64.0.0/10`; nunca o envie ao colaborador;
 4. abra o link em viewport de celular;
 5. confirme nome, itens, canvas, documento e aceite;
 6. assine apenas o termo de teste;

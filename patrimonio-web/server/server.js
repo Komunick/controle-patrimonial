@@ -20,6 +20,27 @@ const HOST = process.env.HOST || '0.0.0.0';
 const ROOT = path.join(__dirname, '..'); // pasta patrimonio-web (arquivos do app)
 const EPI_RELAY_PUBLICO_PADRAO = 'https://controle-patrimonial-relay-epi.onrender.com';
 
+// Aceita somente um relay HTTPS por nome público. IPs diretos (inclusive
+// Tailscale), localhost e nomes de rede interna nunca devem chegar ao motorista.
+function normalizarBasePublica(valor) {
+  try {
+    const url = new URL(String(valor || '').trim());
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+    const ipLiteral = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':');
+    const nomeLocal = host === 'localhost'
+      || host.endsWith('.localhost')
+      || host.endsWith('.local')
+      || host.endsWith('.lan')
+      || host.endsWith('.internal')
+      || host.endsWith('.home.arpa');
+    if (url.protocol !== 'https:' || !host || ipLiteral || nomeLocal
+      || url.username || url.password || url.search || url.hash) return null;
+    return url.toString().replace(/\/+$/, '');
+  } catch (_) {
+    return null;
+  }
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -652,10 +673,11 @@ function handleApi(req, res) {
       }
       // Endereço público dos links de assinatura (túnel/domínio), se configurado.
       if (urlPath === '/api/epi/link-base' && req.method === 'GET') {
-        const base = String(process.env.PAT_LINK_ASSINATURA || '').trim().replace(/\/+$/, '');
+        const configurada = String(process.env.PAT_LINK_ASSINATURA || '').trim();
+        const base = normalizarBasePublica(configurada);
         return sendJson(res, 200, {
           base: base || EPI_RELAY_PUBLICO_PADRAO,
-          origem: base ? 'ambiente' : 'relay-padrao',
+          origem: base ? 'ambiente' : (configurada ? 'ambiente-invalido-relay-padrao' : 'relay-padrao'),
         });
       }
       // Termo de EPI em PDF para download (pelo token da entrega).

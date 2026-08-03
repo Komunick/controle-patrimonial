@@ -60,6 +60,7 @@ test('servidor local oferece healthcheck e encerra por SIGTERM', {
       HOST: '127.0.0.1',
       PORT: String(porta),
       PAT_DATA_DIR: temporario,
+      PAT_LINK_ASSINATURA: 'http://100.116.101.53:8080',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -86,7 +87,7 @@ test('servidor local oferece healthcheck e encerra por SIGTERM', {
   assert.equal(linkBase.status, 200);
   assert.deepEqual(await linkBase.json(), {
     base: 'https://controle-patrimonial-relay-epi.onrender.com',
-    origem: 'relay-padrao',
+    origem: 'ambiente-invalido-relay-padrao',
   });
   processo.kill('SIGTERM');
   const [codigo] = await once(processo, 'exit');
@@ -126,6 +127,8 @@ test('artefatos Linux Mint usam systemd endurecido e preservam a VM', () => {
   assert.doesNotMatch(instalador, /^\s*systemctl\s+(?:stop|restart)\b/m);
   assert.doesNotMatch(verificador, /^\s*systemctl\s+(?:start|stop|restart|enable|disable)\b/m);
   assert.match(app, /https:\/\/controle-patrimonial-relay-epi\.onrender\.com/);
+  assert.match(app, /url\.protocol !== 'https:'/);
+  assert.match(app, /ipLiteral/);
   assert.doesNotMatch(app, /epiBasePublica \|\| location\.origin/);
   assert.match(prompt, /ESTRITAMENTE PROIBIDO/);
   assert.match(prompt, /A VM não foi desligada ou reiniciada/);
