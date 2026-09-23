@@ -72,6 +72,29 @@
       'Talabarte duplo com absorvedor de energia',
       'Touca árabe',
     ],
+    // Itens de manutenção da frota (aba Materiais ▸ Frota): categorias e
+    // unidades de medida que alimentam o cadastro, os filtros e o painel.
+    frotaCategorias: [
+      { key: 'pneus', label: 'Pneus e rodas' },
+      { key: 'iluminacao', label: 'Iluminação (faróis, lanternas, lâmpadas)' },
+      { key: 'freios', label: 'Freios' },
+      { key: 'filtros', label: 'Filtros' },
+      { key: 'lubrificantes', label: 'Óleos e fluidos' },
+      { key: 'eletrica', label: 'Elétrica e baterias' },
+      { key: 'suspensao', label: 'Suspensão e direção' },
+      { key: 'motor', label: 'Motor e transmissão' },
+      { key: 'carroceria', label: 'Carroceria e cabine' },
+      { key: 'ferramentas', label: 'Ferramentas e acessórios' },
+      { key: 'outros', label: 'Outros' },
+    ],
+    frotaUnidades: [
+      { key: 'un', label: 'Unidade' },
+      { key: 'par', label: 'Par' },
+      { key: 'jogo', label: 'Jogo / kit' },
+      { key: 'L', label: 'Litro' },
+      { key: 'kg', label: 'Quilo' },
+      { key: 'm', label: 'Metro' },
+    ],
     peripheralTypes: [
       // Entrada
       { key: 'teclado', label: 'Teclado' },
@@ -347,7 +370,7 @@
   function ensureShape() {
     const e = emptyDB();
     if (!DB || typeof DB !== 'object') { DB = e; return; }
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens']) {
       if (!Array.isArray(DB[k])) DB[k] = [];
     }
     if (!DB.seq || typeof DB.seq !== 'object') DB.seq = e.seq;
@@ -367,7 +390,7 @@
     if (!('started_at' in DB.inventory)) DB.inventory.started_at = null;
     if (!('started_by' in DB.inventory)) DB.inventory.started_by = null;
     // recalcula contadores a partir do maior id existente (robustez)
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens']) {
       const arr = Array.isArray(DB[k]) ? DB[k] : [];
       let max = 0;
       for (const row of arr) if (row && typeof row.id === 'number' && row.id > max) max = row.id;
@@ -1121,6 +1144,93 @@
       return fail(404, 'Rota não encontrada');
     }
 
+    // --- frota: itens de manutenção dos caminhões (pneus, faróis, filtros…) ---
+    // Mesma mecânica da relação de materiais, com categoria, unidade de medida
+    // e, na saída, a placa do veículo em que o item foi aplicado.
+    if (r1 === 'frota') {
+      const id = seg[2];
+      const catOk = (k) => CATALOG.frotaCategorias.some((c) => c.key === k);
+      const uniOk = (k) => CATALOG.frotaUnidades.some((u) => u.key === k);
+      const catLabel = (k) => { const c = CATALOG.frotaCategorias.find((x) => x.key === k); return c ? c.label : 'Outros'; };
+      const texto = (v, max) => { const s = v == null ? '' : String(v).trim().slice(0, max); return s || null; };
+      const duplicado = (nome, categoria, exceto) => DB.frota_itens.some((f) => f !== exceto
+        && f.categoria === categoria && String(f.nome).trim().toLowerCase() === nome.toLowerCase());
+      if (!id) {
+        if (method === 'GET') {
+          const rows = DB.frota_itens.slice().sort((a, b) =>
+            String(catLabel(a.categoria)).localeCompare(String(catLabel(b.categoria)), 'pt-BR')
+            || String(a.nome).localeCompare(String(b.nome), 'pt-BR', { sensitivity: 'base' }));
+          return ok(rows);
+        }
+        if (method === 'POST') {
+          const nome = String(body.nome || '').trim().slice(0, 120);
+          if (!nome) return fail(400, 'Informe o nome do item.');
+          const categoria = catOk(body.categoria) ? body.categoria : 'outros';
+          if (duplicado(nome, categoria)) return fail(409, 'Já existe um item com esse nome nessa categoria.');
+          const unidade = uniOk(body.unidade) ? body.unidade : 'un';
+          const quantidade = Math.max(0, parseInt(body.quantidade, 10) || 0);
+          const minimo = body.minimo == null || body.minimo === '' ? null : Math.max(0, parseInt(body.minimo, 10) || 0);
+          const nid = nextId('frota_itens');
+          const row = {
+            id: nid, nome, categoria, unidade, quantidade, minimo,
+            marca: texto(body.marca, 80), aplicacao: texto(body.aplicacao, 160), obs: texto(body.obs, 400),
+            created_at: nowLocal(), updated_at: nowLocal(),
+          };
+          DB.frota_itens.push(row);
+          audit(actor, 'criar', 'frota', nid, nome, `Item de frota cadastrado (${catLabel(categoria)}) — ${quantidade} ${unidade} em estoque`);
+          persist();
+          return ok(row, 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+      const cur = DB.frota_itens.find((f) => String(f.id) === String(id));
+      if (!cur) return fail(404, 'Item de frota não encontrado');
+      if (method === 'GET') return ok(cur);
+      if (method === 'PUT') {
+        const nome = has(body, 'nome') ? String(body.nome || '').trim().slice(0, 120) : cur.nome;
+        if (!nome) return fail(400, 'Informe o nome do item.');
+        const categoria = has(body, 'categoria') && catOk(body.categoria) ? body.categoria : cur.categoria;
+        if (duplicado(nome, categoria, cur)) return fail(409, 'Já existe um item com esse nome nessa categoria.');
+        cur.nome = nome;
+        cur.categoria = categoria;
+        if (has(body, 'unidade') && uniOk(body.unidade)) cur.unidade = body.unidade;
+        if (has(body, 'minimo')) cur.minimo = body.minimo == null || body.minimo === '' ? null : Math.max(0, parseInt(body.minimo, 10) || 0);
+        if (has(body, 'marca')) cur.marca = texto(body.marca, 80);
+        if (has(body, 'aplicacao')) cur.aplicacao = texto(body.aplicacao, 160);
+        if (has(body, 'obs')) cur.obs = texto(body.obs, 400);
+        cur.updated_at = nowLocal();
+        audit(actor, 'editar', 'frota', cur.id, cur.nome, 'Item de frota atualizado');
+        persist();
+        return ok(cur);
+      }
+      // Entrada (delta positivo) ou saída (delta negativo) de estoque. A saída
+      // pode informar em qual veículo (placa) o item foi aplicado.
+      if (seg[3] === 'ajuste' && method === 'POST') {
+        const delta = parseInt(body.delta, 10);
+        if (!delta) return fail(400, 'Informe a quantidade (entrada positiva, saída negativa).');
+        const novo = cur.quantidade + delta;
+        if (novo < 0) return fail(400, `Só há ${cur.quantidade} ${cur.unidade} de “${cur.nome}” em estoque.`);
+        cur.quantidade = novo;
+        cur.updated_at = nowLocal();
+        const placa = texto(body.placa, 12);
+        const motivo = texto(body.motivo, 200);
+        const extras = [placa ? 'veículo ' + placa.toUpperCase() : '', motivo].filter(Boolean).join(' — ');
+        audit(actor, delta > 0 ? 'entrada' : 'saida', 'frota', cur.id, cur.nome,
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} ${cur.unidade} (estoque: ${novo})${extras ? ' — ' + extras : ''}`);
+        persist();
+        return ok(cur);
+      }
+      if (method === 'DELETE') {
+        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
+        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem excluir itens de frota.');
+        DB.frota_itens = DB.frota_itens.filter((f) => f !== cur);
+        audit(actor, 'excluir', 'frota', cur.id, cur.nome, `Item de frota excluído (estoque: ${cur.quantidade} ${cur.unidade})`);
+        persist();
+        return ok({ ok: true });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
     if (r1 === 'epi') {
       const sub = seg[2];
 
@@ -1835,8 +1945,10 @@
       const limit = Math.min(500, Math.max(1, parseInt(query.limit, 10) || 100));
       const offset = Math.max(0, parseInt(query.offset, 10) || 0);
       let rows = DB.audit_log.slice();
-      if (query.action) rows = rows.filter((r) => r.action === query.action);
-      if (query.entity) rows = rows.filter((r) => r.entity_type === query.entity);
+      // Aceita um valor ou uma lista separada por vírgula (ex.: entity=material,frota).
+      const lista = (v) => String(v).split(',').map((s) => s.trim()).filter(Boolean);
+      if (query.action) { const acoes = lista(query.action); rows = rows.filter((r) => acoes.includes(r.action)); }
+      if (query.entity) { const tipos = lista(query.entity); rows = rows.filter((r) => tipos.includes(r.entity_type)); }
       if (query.q) {
         const t = String(query.q).toLowerCase();
         const hit = (v) => v != null && String(v).toLowerCase().indexOf(t) >= 0;

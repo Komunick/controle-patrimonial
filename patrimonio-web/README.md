@@ -41,7 +41,7 @@ O sistema abre numa **tela de login**. Cada operador entra com seu **login e sen
 ### Operadores (somente administradores)
 Na aba **Operadores**, um administrador pode **cadastrar, editar e remover** operadores, definir **login e senha**, e o **papel**:
 
-- **Administrador** — acessa tudo, inclusive Operadores e Configurações.
+- **Administrador** — acessa tudo, inclusive Operadores, Configurações e o Painel administrativo de Materiais.
 - **Operador** — acessa o restante do sistema (itens, pessoas, inventário, etiquetas, auditoria).
 
 > Importante: como o sistema roda **só no navegador**, o login serve para **identificar o operador** e registrar quem fez cada ação — não é uma segurança forte (os dados ficam no navegador e podem ser exportados). As senhas são guardadas com hash (não em texto puro).
@@ -74,6 +74,9 @@ Recomendação: baixe um backup de tempos em tempos e ao migrar de máquina. Na 
 - **Valor** e **data da compra** em todos os itens; o painel soma o patrimônio total.
 - **Patrimônio sequencial automático** com **QR Code**. O **prefixo é personalizável** (veja Configurações).
 - **Cadastro em lote e tipos livres**: ao cadastrar dá pra informar uma **Quantidade** (cria vários itens idênticos de uma vez, cada um com seu patrimônio sequencial) e escolher **"Outro tipo (especificar)"** para registrar tipos fora do catálogo.
+- **Materiais** (estoque de EPIs e itens de uso, com entrada/saída e estoque mínimo) e, logo abaixo dela, duas sub-abas:
+  - **Painel administrativo** (só administradores): visão geral do estoque de materiais e de frota, lista de **reposição necessária** (itens no mínimo ou abaixo), frota por categoria, **movimentações** com filtros por período, tipo e ação, e exportação do estoque para Excel.
+  - **Frota**: cadastro dos itens de manutenção dos caminhões — pneus, faróis e lâmpadas, filtros, óleos, baterias, peças de freio e suspensão… — com categoria, unidade de medida, estoque mínimo, marca e aplicação (em quais veículos serve). Entradas e saídas ficam na Auditoria; na saída dá para informar a **placa do veículo** que recebeu o item.
 - **Inventário** (conferência física): **digite o patrimônio e tecle Enter** (ou clique em **Conferir** na lista) para marcar os bens presentes. Mostra o progresso (% conferido), separa **pendentes** × **conferidos**, registra quem conferiu e quando, e tem **Reiniciar inventário**. Conferir um sub-item marca o item ao qual ele pertence.
 - **Etiquetas** para impressão — cada etiqueta traz a **logo da empresa**, o QR Code, o nome e o número do patrimônio.
 - **Auditoria** de todas as ações, incluindo **login/logout** com data e hora.

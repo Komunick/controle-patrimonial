@@ -270,7 +270,10 @@
     { seg: 'salas', label: 'Locais', ico: '⌂' },
     { seg: 'homeoffice', label: 'Home Office', ico: '⇄' },
     { seg: 'epis', label: 'EPIs', ico: '⛑' },
-    { seg: 'materiais', label: 'Materiais', ico: '▤' },
+    { seg: 'materiais', label: 'Materiais', ico: '▤', children: [
+      { seg: 'materiais/painel', label: 'Painel administrativo', ico: '◫', adminOnly: true },
+      { seg: 'materiais/frota', label: 'Frota', ico: '⛟' },
+    ] },
     { sep: true },
     { seg: 'inventario', label: 'Inventário', ico: '☑' },
     { seg: 'inspecao', label: 'Inspeção 5S', ico: '✦' },
@@ -281,16 +284,28 @@
     { seg: 'config', label: 'Configurações', ico: '⚙' },
   ];
   function buildNav() {
+    const link = (n, sub) => `<a href="#/${n.seg}" data-seg="${n.seg}"${sub ? ' class="sub"' : ''}><span class="ico">${n.ico}</span>${escapeHtml(n.label)}</a>`;
     $('nav').innerHTML = NAV
       .filter((n) => !n.adminOnly || isAdmin())
-      .map((n) => n.sep
-        ? '<div class="nav-sep"></div>'
-        : `<a href="#/${n.seg}" data-seg="${n.seg}"><span class="ico">${n.ico}</span>${escapeHtml(n.label)}</a>`)
+      .map((n) => {
+        if (n.sep) return '<div class="nav-sep"></div>';
+        // Sub-abas (ex.: Materiais ▸ Painel administrativo / Frota) ficam
+        // indentadas logo abaixo da aba-mãe.
+        const filhos = (n.children || []).filter((c) => !c.adminOnly || isAdmin());
+        return link(n) + (filhos.length ? `<div class="nav-sub">${filhos.map((c) => link(c, true)).join('')}</div>` : '');
+      })
       .join('');
   }
-  function setActive(seg) {
-    document.querySelectorAll('#nav a').forEach((a) => {
-      a.classList.toggle('active', a.dataset.seg === seg);
+  function setActive(seg, rest) {
+    // Numa sub-aba (ex.: materiais/frota) acende o link dela e deixa a aba-mãe
+    // marcada como "aberta"; fora disso acende só a aba principal.
+    const links = Array.from(document.querySelectorAll('#nav a'));
+    const sub = rest && rest.length ? seg + '/' + rest[0] : '';
+    const temSub = !!sub && links.some((a) => a.dataset.seg === sub);
+    const alvo = temSub ? sub : seg;
+    links.forEach((a) => {
+      a.classList.toggle('active', a.dataset.seg === alvo);
+      a.classList.toggle('open', temSub && a.dataset.seg === seg);
     });
   }
   function setTitle(t) { $('page-title').textContent = t; }
@@ -314,7 +329,7 @@
       await openAssetByTag(decodeURIComponent(rest.join('/')));
       return;
     }
-    setActive(seg);
+    setActive(seg, rest);
     closeSidebar();
     try {
       switch (seg) {
@@ -325,7 +340,14 @@
         case 'salas': setTitle('Locais'); await renderRooms(); break;
         case 'homeoffice': setTitle('Home Office'); await renderHomeOffice(); break;
         case 'epis': setTitle('Entrega de EPIs'); await renderEpis(); break;
-        case 'materiais': setTitle('Relação de materiais'); await renderMateriais(); break;
+        case 'materiais':
+          if (rest[0] === 'painel') {
+            if (!isAdmin()) { location.hash = '#/materiais'; return; }
+            setTitle('Materiais · Painel administrativo'); await renderMateriaisPainel();
+          } else if (rest[0] === 'frota') {
+            setTitle('Materiais · Frota'); await renderFrota();
+          } else { setTitle('Relação de materiais'); await renderMateriais(); }
+          break;
         case 'inventario': setTitle('Inventário'); setTopbar(''); await renderInventory(); break;
         case 'inspecao':
           setTitle('Inspeção 5S');
@@ -2178,6 +2200,334 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Materiais ▸ Frota — itens de manutenção dos caminhões (pneus, faróis,
+  // filtros, óleos…). Mesma mecânica da relação de materiais, com categoria,
+  // unidade de medida e a placa do veículo registrada na saída.
+  // ---------------------------------------------------------------------------
+  const frotaCategorias = () => state.catalog.frotaCategorias || [];
+  const frotaUnidades = () => state.catalog.frotaUnidades || [];
+  function frotaCategoriaLabel(key) { const c = frotaCategorias().find((x) => x.key === key); return c ? c.label : (key || 'Outros'); }
+  const frotaAbaixo = (f) => f.minimo != null && f.quantidade <= f.minimo;
+
+  async function renderFrota() {
+    setTopbar('<button class="btn btn-primary" id="frota-new">+ Novo item de frota</button>');
+    $('frota-new').onclick = () => frotaForm();
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    const itens = await api('/api/frota');
+    const unidades = itens.reduce((s, f) => s + (f.quantidade || 0), 0);
+    const baixos = itens.filter(frotaAbaixo);
+    const catOpts = '<option value="">Todas as categorias</option>' + frotaCategorias()
+      .map((c) => `<option value="${c.key}">${escapeHtml(c.label)}</option>`).join('');
+
+    view().innerHTML = `
+      <div class="cards">
+        ${statCard('Itens de frota cadastrados', itens.length)}
+        ${statCard('Unidades em estoque', unidades, 'is-accent')}
+        ${statCard('Abaixo do mínimo', baixos.length, baixos.length ? 'is-warn' : '')}
+      </div>
+      <div class="toolbar">
+        <div class="search"><input id="frota-q" placeholder="Buscar por item, marca ou aplicação…"></div>
+        <select class="filter" id="frota-cat">${catOpts}</select>
+        <label class="chk"><input type="checkbox" id="frota-so-baixos"> Só abaixo do mínimo</label>
+      </div>
+      <div class="panel"><div id="frota-rows"></div></div>`;
+
+    const draw = () => {
+      const term = ($('frota-q').value || '').toLowerCase();
+      const cat = $('frota-cat').value;
+      const soBaixos = $('frota-so-baixos').checked;
+      const hit = (v) => v != null && String(v).toLowerCase().includes(term);
+      const rows = itens.filter((f) => (!term || hit(f.nome) || hit(f.marca) || hit(f.aplicacao))
+        && (!cat || f.categoria === cat) && (!soBaixos || frotaAbaixo(f)));
+      $('frota-rows').innerHTML = !rows.length
+        ? `<div class="empty">${itens.length ? 'Nenhum item de frota para este filtro.' : 'Nenhum item de frota ainda. Clique em “+ Novo item de frota” para cadastrar pneus, faróis, filtros e outros itens de manutenção dos caminhões.'}</div>`
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Item</th><th>Categoria</th><th class="num">Em estoque</th><th class="num">Mínimo</th><th>Atualizado</th><th></th></tr></thead>
+            <tbody>${rows.map((f) => `<tr>
+                <td><div class="cell-title">${escapeHtml(f.nome)}</div>
+                    ${f.marca || f.aplicacao ? `<div class="cell-sub">${[f.marca, f.aplicacao].filter(Boolean).map(escapeHtml).join(' · ')}</div>` : ''}
+                    ${frotaAbaixo(f) ? '<span class="s5-chip warn">Abaixo do mínimo</span>' : ''}</td>
+                <td><span class="pill">${escapeHtml(frotaCategoriaLabel(f.categoria))}</span></td>
+                <td class="num mono">${f.quantidade} ${escapeHtml(f.unidade || 'un')}</td>
+                <td class="num mono">${f.minimo == null ? '—' : f.minimo}</td>
+                <td>${fmtDateTime(f.updated_at || f.created_at)}</td>
+                <td><div class="row-actions">
+                  <button class="btn btn-mini btn-primary" data-entrada="${f.id}">+ Entrada</button>
+                  <button class="btn btn-mini btn-ghost" data-saida="${f.id}">− Saída</button>
+                  <button class="btn btn-mini btn-ghost" data-editar="${f.id}">Editar</button>
+                  ${isAdmin() ? `<button class="btn btn-mini btn-ghost" data-excluir="${f.id}" title="Excluir item de frota">🗑</button>` : ''}
+                </div></td>
+              </tr>`).join('')}</tbody></table></div>`;
+      const porId = (idStr) => itens.find((f) => String(f.id) === idStr);
+      const liga = (attr, fn) => $('frota-rows').querySelectorAll(`[data-${attr}]`).forEach((b) => {
+        b.onclick = () => { const f = porId(b.dataset[attr]); if (f) fn(f); };
+      });
+      liga('entrada', (f) => ajusteFrota(f, +1));
+      liga('saida', (f) => ajusteFrota(f, -1));
+      liga('editar', (f) => frotaForm(f));
+      liga('excluir', async (f) => {
+        const ok2 = await confirmDialog('Excluir item de frota',
+          `Excluir “${f.nome}” da frota? O estoque atual (${f.quantidade} ${f.unidade}) será perdido do registro.`,
+          'Excluir', true);
+        if (!ok2) return;
+        try { await api('/api/frota/' + f.id, { method: 'DELETE' }); toast('Item de frota excluído.'); rerender(); }
+        catch (e) { toast(e.message, 'err'); }
+      });
+    };
+    let deb;
+    $('frota-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 200); });
+    $('frota-cat').addEventListener('change', draw);
+    $('frota-so-baixos').addEventListener('change', draw);
+    draw();
+  }
+
+  function frotaForm(f) {
+    const body = openDrawer(f ? 'Editar item de frota — ' + f.nome : 'Novo item de frota');
+    const catSel = f ? f.categoria : 'pneus';
+    const uniSel = f ? f.unidade : 'un';
+    const catOpts = frotaCategorias().map((c) => `<option value="${c.key}"${c.key === catSel ? ' selected' : ''}>${escapeHtml(c.label)}</option>`).join('');
+    const uniOpts = frotaUnidades().map((u) => `<option value="${u.key}"${u.key === uniSel ? ' selected' : ''}>${escapeHtml(u.label)}</option>`).join('');
+    body.innerHTML = `
+      <div class="field"><label for="fr-nome">Nome do item *</label>
+        <input id="fr-nome" maxlength="120" value="${escapeHtml(f ? f.nome : '')}" placeholder="Ex.: Pneu 295/80 R22.5 · Lâmpada H7 24V · Filtro de óleo">
+        <div class="hint">Inclua a medida ou o código quando fizer diferença (ex.: 295/80 R22.5, H7 24V).</div></div>
+      <div class="field-row">
+        <div class="field"><label for="fr-cat">Categoria</label><select id="fr-cat">${catOpts}</select></div>
+        <div class="field"><label for="fr-uni">Unidade de medida</label><select id="fr-uni">${uniOpts}</select></div>
+      </div>
+      <div class="field-row">
+        ${f ? '' : `<div class="field"><label for="fr-qtd">Quantidade inicial em estoque</label><input id="fr-qtd" type="number" min="0" value="0"></div>`}
+        <div class="field"><label for="fr-min">Estoque mínimo <span class="muted">(avisa quando chegar nesse número — opcional)</span></label>
+          <input id="fr-min" type="number" min="0" value="${f && f.minimo != null ? f.minimo : ''}"></div>
+      </div>
+      <div class="field"><label for="fr-marca">Marca / modelo</label>
+        <input id="fr-marca" maxlength="80" value="${escapeHtml(f ? f.marca || '' : '')}" placeholder="Ex.: Pirelli FG85 · Osram"></div>
+      <div class="field"><label for="fr-apl">Aplicação <span class="muted">(em quais veículos ou eixos serve)</span></label>
+        <input id="fr-apl" maxlength="160" value="${escapeHtml(f ? f.aplicacao || '' : '')}" placeholder="Ex.: Scania R450 — eixo dianteiro · toda a frota Volvo FH"></div>
+      <div class="field"><label for="fr-obs">Observações</label>
+        <textarea id="fr-obs" maxlength="400" placeholder="Fornecedor, código de referência, garantia…">${escapeHtml(f ? f.obs || '' : '')}</textarea></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="fr-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="fr-salvar">${f ? 'Salvar' : 'Cadastrar'}</button>
+      </div>`;
+    setTimeout(() => { const c = $('fr-nome'); if (c) c.focus(); }, 50);
+    $('fr-cancelar').onclick = closeDrawer;
+    $('fr-salvar').onclick = async () => {
+      const nome = $('fr-nome').value.trim();
+      if (!nome) { toast('Informe o nome do item.', 'err'); return; }
+      const dados = {
+        nome, categoria: $('fr-cat').value, unidade: $('fr-uni').value,
+        minimo: $('fr-min').value === '' ? null : parseInt($('fr-min').value, 10) || 0,
+        marca: $('fr-marca').value.trim() || null,
+        aplicacao: $('fr-apl').value.trim() || null,
+        obs: $('fr-obs').value.trim() || null,
+      };
+      try {
+        if (f) {
+          await api('/api/frota/' + f.id, { method: 'PUT', body: dados });
+          toast('Item de frota atualizado.');
+        } else {
+          dados.quantidade = parseInt($('fr-qtd').value, 10) || 0;
+          await api('/api/frota', { method: 'POST', body: dados });
+          toast('Item de frota cadastrado.');
+        }
+        closeDrawer();
+        rerender();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  function ajusteFrota(f, sinal) {
+    const body = openDrawer(`${sinal > 0 ? 'Entrada de estoque' : 'Saída para veículo'} — ${f.nome}`);
+    body.innerHTML = `
+      <div class="s5-placar">Em estoque agora: <strong>${f.quantidade} ${escapeHtml(f.unidade)}</strong></div>
+      <div class="field"><label for="fa-qtd">Quantidade que ${sinal > 0 ? 'entra' : 'sai'} * <span class="muted">(${escapeHtml(f.unidade)})</span></label>
+        <input id="fa-qtd" type="number" min="1" value="1"></div>
+      ${sinal < 0 ? `<div class="field"><label for="fa-placa">Veículo (placa) <span class="muted">(em qual caminhão foi aplicado — opcional)</span></label>
+        <input id="fa-placa" maxlength="12" placeholder="Ex.: ABC1D23" style="text-transform:uppercase"></div>` : ''}
+      <div class="field"><label for="fa-motivo">${sinal > 0 ? 'Origem / nota fiscal' : 'Motivo'}</label>
+        <input id="fa-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234 · fornecedor' : 'Ex.: troca preventiva; furo; revisão dos 50 mil km'}"></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="fa-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="fa-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
+      </div>`;
+    setTimeout(() => { const c = $('fa-qtd'); if (c) { c.focus(); c.select(); } }, 50);
+    $('fa-cancelar').onclick = closeDrawer;
+    $('fa-salvar').onclick = async () => {
+      const qtd = parseInt($('fa-qtd').value, 10) || 0;
+      if (qtd < 1) { toast('Informe uma quantidade maior que zero.', 'err'); return; }
+      const placaEl = $('fa-placa');
+      try {
+        const r = await api(`/api/frota/${f.id}/ajuste`, {
+          method: 'POST',
+          body: {
+            delta: sinal * qtd,
+            motivo: $('fa-motivo').value.trim() || null,
+            placa: placaEl ? (placaEl.value.trim().toUpperCase() || null) : null,
+          },
+        });
+        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada — estoque de “${r.nome}”: ${r.quantidade} ${r.unidade}.`);
+        closeDrawer();
+        rerender();
+      } catch (e) { toast(e.message, 'err'); }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Materiais ▸ Painel administrativo (somente administradores): visão geral do
+  // estoque de materiais e de frota, reposição pendente, frota por categoria e
+  // as movimentações de estoque (entradas, saídas, cadastros e exclusões).
+  // ---------------------------------------------------------------------------
+  async function renderMateriaisPainel() {
+    setTopbar('<button class="btn btn-primary" id="pa-export">⬇ Exportar estoque (Excel)</button>');
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    const [materiais, frota, auditoria] = await Promise.all([
+      api('/api/materiais'), api('/api/frota'), api('/api/audit?entity=material,frota&limit=500'),
+    ]);
+    const movs = auditoria.rows || [];
+    const dias = (n) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - n); return d; };
+    const tsDate = (ts) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(ts || '');
+      return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
+    };
+    const ult30 = movs.filter((r) => (r.action === 'entrada' || r.action === 'saida') && (tsDate(r.ts) || 0) >= dias(30));
+    const entradas30 = ult30.filter((r) => r.action === 'entrada').length;
+    const saidas30 = ult30.filter((r) => r.action === 'saida').length;
+    const unidadesTotal = materiais.reduce((s, m) => s + (m.quantidade || 0), 0) + frota.reduce((s, f) => s + (f.quantidade || 0), 0);
+
+    // Itens no estoque mínimo ou abaixo dele (materiais e frota juntos), com a
+    // maior falta primeiro.
+    const reposicao = [
+      ...materiais.filter((m) => m.minimo != null && m.quantidade <= m.minimo)
+        .map((m) => ({ tipo: 'Material', nome: m.nome, qtd: m.quantidade, un: 'un', minimo: m.minimo, extra: '', abrir: () => ajusteMaterial(m, +1) })),
+      ...frota.filter(frotaAbaixo)
+        .map((f) => ({ tipo: 'Frota', nome: f.nome, qtd: f.quantidade, un: f.unidade, minimo: f.minimo, extra: frotaCategoriaLabel(f.categoria), abrir: () => ajusteFrota(f, +1) })),
+    ].sort((a, b) => (b.minimo - b.qtd) - (a.minimo - a.qtd));
+
+    const porCat = {};
+    for (const f of frota) {
+      const c = porCat[f.categoria] || (porCat[f.categoria] = { label: frotaCategoriaLabel(f.categoria), itens: 0, unidades: 0, baixos: 0 });
+      c.itens += 1; c.unidades += f.quantidade || 0; if (frotaAbaixo(f)) c.baixos += 1;
+    }
+    const cats = Object.values(porCat).sort((a, b) => b.itens - a.itens);
+
+    view().innerHTML = `
+      <div class="cards cards-compact">
+        ${statCard('Materiais cadastrados', materiais.length)}
+        ${statCard('Itens de frota', frota.length)}
+        ${statCard('Unidades em estoque', unidadesTotal, 'is-accent')}
+        ${statCard('Precisam de reposição', reposicao.length, reposicao.length ? 'is-warn' : '')}
+        ${statCard('Entradas · 30 dias', entradas30)}
+        ${statCard('Saídas · 30 dias', saidas30)}
+      </div>
+      <div class="pa-grid">
+        <div class="panel panel-pad">
+          <div class="section-title">Reposição necessária</div>
+          ${!reposicao.length ? '<div class="empty">Nenhum item no estoque mínimo ou abaixo dele.</div>' : `<div class="table-wrap"><table>
+            <thead><tr><th>Item</th><th class="num">Em estoque</th><th class="num">Mínimo</th><th class="num">Faltam</th><th></th></tr></thead>
+            <tbody>${reposicao.map((r, i) => `<tr>
+              <td><div class="cell-title">${escapeHtml(r.nome)}</div>
+                  <div class="cell-sub">${escapeHtml(r.tipo)}${r.extra ? ' · ' + escapeHtml(r.extra) : ''}</div></td>
+              <td class="num mono">${r.qtd} ${escapeHtml(r.un)}</td>
+              <td class="num mono">${r.minimo}</td>
+              <td class="num"><span class="s5-chip warn">${r.minimo - r.qtd > 0 ? r.minimo - r.qtd : 'no limite'}</span></td>
+              <td><div class="row-actions"><button class="btn btn-mini btn-primary" data-rep="${i}">+ Entrada</button></div></td>
+            </tr>`).join('')}</tbody></table></div>`}
+        </div>
+        <div class="panel panel-pad">
+          <div class="section-title">Frota por categoria</div>
+          ${!cats.length ? '<div class="empty">Nenhum item de frota cadastrado ainda. Cadastre em <a href="#/materiais/frota">Materiais ▸ Frota</a>.</div>' : `<div class="table-wrap"><table>
+            <thead><tr><th>Categoria</th><th class="num">Itens</th><th class="num">Unidades</th><th class="num">Abaixo do mínimo</th></tr></thead>
+            <tbody>${cats.map((c) => `<tr>
+              <td>${escapeHtml(c.label)}</td>
+              <td class="num mono">${c.itens}</td>
+              <td class="num mono">${c.unidades}</td>
+              <td class="num">${c.baixos ? `<span class="s5-chip warn">${c.baixos}</span>` : '<span class="muted">—</span>'}</td>
+            </tr>`).join('')}</tbody></table></div>`}
+        </div>
+      </div>
+      <div class="section-title">Movimentações de estoque</div>
+      <div class="toolbar">
+        <div class="search"><input id="pa-q" placeholder="Buscar por item, operador ou detalhe…"></div>
+        <select class="filter" id="pa-tipo">
+          <option value="">Materiais e frota</option>
+          <option value="material">Só materiais</option>
+          <option value="frota">Só frota</option>
+        </select>
+        <select class="filter" id="pa-acao">
+          <option value="">Todas as ações</option>
+          <option value="entrada">Entradas</option>
+          <option value="saida">Saídas</option>
+          <option value="criar">Cadastros</option>
+          <option value="editar">Edições</option>
+          <option value="excluir">Exclusões</option>
+        </select>
+        <select class="filter" id="pa-periodo">
+          <option value="7">Últimos 7 dias</option>
+          <option value="30" selected>Últimos 30 dias</option>
+          <option value="90">Últimos 90 dias</option>
+          <option value="">Tudo (até 500 registros)</option>
+        </select>
+      </div>
+      <div class="panel"><div id="pa-rows"></div></div>`;
+
+    view().querySelectorAll('[data-rep]').forEach((b) => { b.onclick = () => reposicao[+b.dataset.rep].abrir(); });
+
+    let filtradas = movs;
+    const drawMovs = () => {
+      const term = ($('pa-q').value || '').toLowerCase();
+      const tipo = $('pa-tipo').value, acao = $('pa-acao').value, per = $('pa-periodo').value;
+      const desde = per ? dias(parseInt(per, 10)) : null;
+      const hit = (v) => v != null && String(v).toLowerCase().includes(term);
+      filtradas = movs.filter((r) => (!tipo || r.entity_type === tipo) && (!acao || r.action === acao)
+        && (!desde || (tsDate(r.ts) || 0) >= desde)
+        && (!term || hit(r.entity_label) || hit(r.actor) || hit(r.details)));
+      $('pa-rows').innerHTML = !filtradas.length
+        ? '<div class="empty">Nenhuma movimentação para este filtro.</div>'
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Quando</th><th>Operador</th><th>Ação</th><th>Tipo</th><th>Item</th><th>Detalhes</th></tr></thead>
+            <tbody>${filtradas.map((r) => `<tr>
+              <td class="nowrap">${fmtDateTime(r.ts)}</td>
+              <td>${escapeHtml(r.actor)}</td>
+              <td>${escapeHtml(auditActionLabel(r.action))}</td>
+              <td>${escapeHtml(ENTITY_LABELS[r.entity_type] || r.entity_type || '—')}</td>
+              <td>${escapeHtml(r.entity_label || '—')}</td>
+              <td class="muted">${escapeHtml(auditDetails(r.details))}</td>
+            </tr>`).join('')}</tbody></table></div>`;
+    };
+    let deb;
+    $('pa-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(drawMovs, 200); });
+    ['pa-tipo', 'pa-acao', 'pa-periodo'].forEach((id) => $(id).addEventListener('change', drawMovs));
+    drawMovs();
+
+    $('pa-export').onclick = () => exportEstoqueExcel(materiais, frota, filtradas);
+  }
+
+  // Planilha só do estoque: materiais, frota e as movimentações filtradas no painel.
+  function exportEstoqueExcel(materiais, frota, movs) {
+    if (typeof XLSX === 'undefined') { toast('Biblioteca de planilha indisponível.', 'err'); return; }
+    try {
+      const wb = XLSX.utils.book_new();
+      const add = (name, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+      const linhasMat = [['Material', 'Em estoque', 'Estoque mínimo', 'Abaixo do mínimo', 'Atualizado em']];
+      materiais.forEach((m) => linhasMat.push([m.nome || '', m.quantidade == null ? '' : m.quantidade, m.minimo == null ? '' : m.minimo, m.minimo != null && m.quantidade <= m.minimo ? 'Sim' : 'Não', m.updated_at || m.created_at || '']));
+      add('Materiais', linhasMat);
+      add('Frota', frotaRowsXlsx(frota));
+      const linhasMov = [['Quando', 'Operador', 'Ação', 'Tipo', 'Item', 'Detalhes']];
+      movs.forEach((r) => linhasMov.push([r.ts || '', r.actor || '', auditActionLabel(r.action), ENTITY_LABELS[r.entity_type] || r.entity_type || '', r.entity_label || '', auditDetails(r.details)]));
+      add('Movimentações', linhasMov);
+      XLSX.writeFile(wb, `estoque-materiais-frota-${todayStr()}.xlsx`);
+      toast('Planilha do estoque baixada.');
+    } catch (e) { toast('Falha ao exportar: ' + e.message, 'err'); }
+  }
+  // Linhas da aba "Frota" (usada no backup completo e na planilha do estoque).
+  function frotaRowsXlsx(frota) {
+    const rows = [['Item', 'Categoria', 'Unidade', 'Em estoque', 'Estoque mínimo', 'Marca / modelo', 'Aplicação', 'Observações', 'Atualizado em']];
+    (frota || []).forEach((f) => rows.push([f.nome || '', frotaCategoriaLabel(f.categoria), f.unidade || 'un', f.quantidade == null ? '' : f.quantidade, f.minimo == null ? '' : f.minimo, f.marca || '', f.aplicacao || '', f.obs || '', f.updated_at || f.created_at || '']));
+    return rows;
+  }
+
+  // ---------------------------------------------------------------------------
   // Entrega de EPIs com assinatura digital por link (sem papel)
   // ---------------------------------------------------------------------------
   const EPI_STATUS = {
@@ -3026,9 +3376,10 @@
     remover_dono: 'Removeu dono', leitura: 'Leitura QR', status: 'Alterou status',
     inventario: 'Inventário', login: 'Entrou', logout: 'Saiu', config: 'Configurações',
     ho_saida: 'Saída p/ Home Office', ho_volta: 'Devolução Home Office',
+    entrada: 'Entrada de estoque', saida: 'Saída de estoque',
     seed: 'Sistema',
   };
-  const ENTITY_LABELS = { asset: 'Item', peripheral: 'Sub-item', person: 'Pessoa', room: 'Sala', homeoffice: 'Home Office', assignment: 'Vínculo', user: 'Operador', sistema: 'Sistema' };
+  const ENTITY_LABELS = { asset: 'Item', peripheral: 'Sub-item', person: 'Pessoa', room: 'Sala', homeoffice: 'Home Office', assignment: 'Vínculo', user: 'Operador', material: 'Material', frota: 'Item de frota', sistema: 'Sistema' };
   function auditActionLabel(a) { return ACTION_LABELS[a] || a; }
 
   async function renderAudit() {
@@ -3205,6 +3556,7 @@
       const matRows = [['Material', 'Em estoque', 'Estoque mínimo', 'Atualizado em']];
       (dump.materiais || []).forEach((m) => matRows.push([m.nome || '', m.quantidade == null ? '' : m.quantidade, m.minimo == null ? '' : m.minimo, m.updated_at || m.created_at || '']));
       add('Materiais', matRows);
+      add('Frota', frotaRowsXlsx(dump.frota_itens));
 
       const userRows = [['Login', 'Nome', 'Papel', 'Ativo', 'Criado em']];
       (dump.users || []).forEach((u) => userRows.push([u.login, u.name, u.role === 'admin' ? 'Administrador' : 'Operador', u.active === false ? 'Não' : 'Sim', u.created_at || '']));
