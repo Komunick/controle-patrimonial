@@ -95,6 +95,51 @@
       { key: 'kg', label: 'Quilo' },
       { key: 'm', label: 'Metro' },
     ],
+    // Frota ▸ Veículos e Manutenções: tipos de veículo, situação, tipo de
+    // manutenção e serviços sugeridos no registro (dá para digitar outro).
+    // Veículos e reboques vêm do TMS (tms.braziltransports.com.br): tipo, status
+    // e propriedade usam os códigos de lá; o rótulo é só para a tela.
+    tiposVeiculo: [
+      { key: 'van', label: 'Van', categoria: 'veiculo' },
+      { key: 'vuc', label: 'VUC', categoria: 'veiculo' },
+      { key: 'tres_quartos', label: '3/4', categoria: 'veiculo' },
+      { key: 'toco', label: 'Toco', categoria: 'veiculo' },
+      { key: 'truck', label: 'Truck', categoria: 'veiculo' },
+      { key: 'bitruck', label: 'Bitruck', categoria: 'veiculo' },
+      { key: 'carreta', label: 'Carreta', categoria: 'veiculo' },
+      { key: 'carreta_ls', label: 'Carreta LS', categoria: 'veiculo' },
+      { key: 'bitrem', label: 'Bitrem', categoria: 'veiculo' },
+      { key: 'rodotrem', label: 'Rodotrem', categoria: 'veiculo' },
+      { key: 'sider', label: 'Reboque sider', categoria: 'reboque' },
+      { key: 'bau', label: 'Reboque baú', categoria: 'reboque' },
+      { key: 'graneleiro', label: 'Reboque graneleiro', categoria: 'reboque' },
+      { key: 'tanque', label: 'Reboque tanque', categoria: 'reboque' },
+      { key: 'frigorifico', label: 'Reboque frigorífico', categoria: 'reboque' },
+      { key: 'prancha', label: 'Reboque prancha', categoria: 'reboque' },
+      { key: 'cacamba', label: 'Reboque caçamba', categoria: 'reboque' },
+      { key: 'porta_container', label: 'Reboque porta-contêiner', categoria: 'reboque' },
+    ],
+    situacoesVeiculo: [
+      { key: 'active', label: 'Ativo' },
+      { key: 'maintenance', label: 'Em manutenção' },
+      { key: 'unavailable', label: 'Indisponível' },
+      { key: 'blocked', label: 'Bloqueado' },
+      { key: 'inactive', label: 'Inativo' },
+    ],
+    propriedadesVeiculo: [
+      { key: 'owned', label: 'Própria' },
+      { key: 'subcontracted', label: 'Terceirizada' },
+    ],
+    tiposManutencao: [
+      { key: 'preventiva', label: 'Preventiva' },
+      { key: 'corretiva', label: 'Corretiva' },
+    ],
+    servicosManutencao: [
+      'Revisão programada', 'Troca de óleo e filtro', 'Troca de filtro de ar', 'Troca de filtro de combustível',
+      'Pastilhas / lonas de freio', 'Alinhamento e balanceamento', 'Troca de pneus', 'Rodízio de pneus',
+      'Suspensão', 'Embreagem', 'Câmbio / diferencial', 'Sistema elétrico', 'Bateria',
+      'Arrefecimento / radiador', 'Lubrificação / graxa', 'Tacógrafo', 'Ar-condicionado', 'Funilaria / carroceria',
+    ],
     // Acessos por operador (Operadores ▸ Acessos por aba). Cada aba lista os
     // níveis que fazem sentido nela, em ordem crescente; "padrao" é o que vale
     // para operadores cadastrados antes desta versão (o comportamento antigo).
@@ -130,6 +175,10 @@
         ajuda: { ver: 'Consultar os itens da frota', criar: 'Cadastrar itens e dar entrada e saída', editar: 'Alterar dados dos itens', excluir: 'Excluir itens de frota' } },
       { key: 'frota_painel', label: 'Frota · Painel administrativo', grupo: 'Estoque', niveis: ['nenhum', 'ver'], padrao: 'nenhum',
         ajuda: { ver: 'Ver reposição, consumo por veículo e movimentações' } },
+      { key: 'veiculos', label: 'Frota · Veículos', grupo: 'Frota', niveis: ['nenhum', 'ver', 'editar'], padrao: 'ver',
+        ajuda: { ver: 'Consultar os veículos e reboques do TMS e a ficha de cada um', editar: 'Completar nº da frota, marca, modelo, ano e km' } },
+      { key: 'manutencoes', label: 'Frota · Manutenções', grupo: 'Frota', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'ver',
+        ajuda: { ver: 'Consultar o histórico e os indicadores', criar: 'Registrar e importar manutenções', editar: 'Corrigir manutenções registradas', excluir: 'Excluir manutenções' } },
       { key: 'inventario', label: 'Inventário', grupo: 'Controle', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'excluir',
         ajuda: { ver: 'Acompanhar o inventário', criar: 'Conferir itens', editar: 'Desfazer conferências', excluir: 'Reiniciar o inventário' } },
       { key: 'inspecao', label: 'Inspeção 5S', grupo: 'Controle', niveis: ['nenhum', 'ver', 'criar', 'excluir'], padrao: 'criar',
@@ -502,7 +551,7 @@
   function ensureShape() {
     const e = emptyDB();
     if (!DB || typeof DB !== 'object') { DB = e; return; }
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens', 'veiculos', 'manutencoes']) {
       if (!Array.isArray(DB[k])) DB[k] = [];
     }
     if (!DB.seq || typeof DB.seq !== 'object') DB.seq = e.seq;
@@ -522,7 +571,7 @@
     if (!('started_at' in DB.inventory)) DB.inventory.started_at = null;
     if (!('started_by' in DB.inventory)) DB.inventory.started_by = null;
     // recalcula contadores a partir do maior id existente (robustez)
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens', 'veiculos', 'manutencoes']) {
       const arr = Array.isArray(DB[k]) ? DB[k] : [];
       let max = 0;
       for (const row of arr) if (row && typeof row.id === 'number' && row.id > max) max = row.id;
@@ -632,17 +681,219 @@
     DB.audit_log.push(row);
   }
 
+  // ===========================================================================
+  // Frota ▸ Veículos e Manutenções — validação comum ao cadastro e à importação
+  // ===========================================================================
+  const normPlaca = (v) => String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const PLACA_OK = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/; // ABC1234 ou Mercosul ABC1D23
+  const textoLimpo = (v, max) => { const s = v == null ? '' : String(v).trim().slice(0, max); return s || null; };
+  // "158.432", "158432 km" e 158432 viram 158432; vazio vira null.
+  function inteiroOuNull(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return isFinite(v) ? Math.round(v) : null;
+    const d = String(v).replace(/\D/g, '');
+    return d ? parseInt(d, 10) : null;
+  }
+  function dataValida(d) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+    const [y, m, dd] = d.split('-').map(Number);
+    const dt = new Date(y, m - 1, dd);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === dd;
+  }
+  function reais(c) {
+    if (c == null) return '';
+    return 'R$ ' + (c / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  }
+  const rotuloCatalogo = (lista, k) => { const x = lista.find((i) => i.key === k); return x ? x.label : k; };
+  const fmtKm = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' km';
+  const CAMPO_VEICULO = { placa: 'placa', frota: 'nº da frota', marca: 'marca', modelo: 'modelo', ano: 'ano', tipo: 'tipo', km_atual: 'km', situacao: 'situação', obs: 'observações' };
+  const CAMPO_MANUT = { veiculo_id: 'veículo', data: 'data', servico: 'serviço', tipo: 'tipo', km: 'km', custo_cents: 'custo', oficina: 'oficina', obs: 'observações' };
+  const veiculoPorId = (id) => DB.veiculos.find((v) => String(v.id) === String(id)) || null;
+
+  // Dados de manutenção que o TMS não tem (nº da frota, marca, modelo, ano, km e
+  // observações). Placa, tipo, status e documentos vêm do TMS e não mudam aqui.
+  function camposVeiculo(b, parcial) {
+    const out = {};
+    const anoMax = new Date().getFullYear() + 1;
+    if (!parcial || has(b, 'frota')) out.frota = textoLimpo(b.frota, 20);
+    if (!parcial || has(b, 'marca')) out.marca = textoLimpo(b.marca, 40);
+    if (!parcial || has(b, 'modelo')) out.modelo = textoLimpo(b.modelo, 60);
+    if (!parcial || has(b, 'ano')) {
+      const a = inteiroOuNull(b.ano);
+      if (a != null && (a < 1950 || a > anoMax)) return { erro: `Ano inválido: use um ano entre 1950 e ${anoMax}.` };
+      out.ano = a;
+    }
+    if (!parcial || has(b, 'km_atual')) {
+      const k = inteiroOuNull(b.km_atual);
+      if (k != null && k > 9999999) return { erro: 'Km inválido.' };
+      out.km_atual = k;
+    }
+    if (!parcial || has(b, 'obs')) out.obs = textoLimpo(b.obs, 400);
+    return { campos: out };
+  }
+  const MSG_VEICULOS_DO_TMS = 'Os veículos e reboques vêm do TMS (tms.braziltransports.com.br). Cadastre, altere a placa ou arquive por lá: a lista daqui se atualiza sozinha.';
+
+  // Sincronização com o TMS: o servidor (server.js) entra no TMS, lê veículos e
+  // reboques e entrega aqui a lista já traduzida. O TMS manda na identidade
+  // (placa, tipo, status, documentos); os dados de manutenção ficam aqui.
+  // Veículo que já existia com a mesma placa é ligado ao do TMS (mantém o histórico);
+  // o que sumiu do TMS fica marcado "fora do TMS" e sai da lista, sem perder histórico.
+  function sincronizarVeiculosTms(lista, autor) {
+    const res = { total: 0, arquivados: 0, novos: 0, atualizados: 0, vinculados: 0, fora: 0 };
+    const vistos = new Set();
+    const agora = nowLocal();
+    const TIPOS_OK = CATALOG.tiposVeiculo.map((t) => t.key);
+    const STATUS_OK = CATALOG.situacoesVeiculo.map((t) => t.key);
+    for (const t of Array.isArray(lista) ? lista : []) {
+      if (!t || !t.tms_id) continue;
+      const placa = normPlaca(t.placa);
+      if (!placa) continue;
+      let v = DB.veiculos.find((x) => x.tms_id === t.tms_id);
+      if (!v) {
+        v = DB.veiculos.find((x) => !x.tms_id && x.placa === placa);
+        if (v) { v.tms_id = String(t.tms_id); res.vinculados += 1; }
+      }
+      const dados = {
+        placa,
+        categoria: t.categoria === 'reboque' ? 'reboque' : 'veiculo',
+        tipo: TIPOS_OK.indexOf(t.tipo) >= 0 ? t.tipo : String(t.tipo || '').slice(0, 30),
+        status: STATUS_OK.indexOf(t.status) >= 0 ? t.status : 'active',
+        arquivado: !!t.arquivado,
+        propriedade: t.propriedade === 'subcontracted' ? 'subcontracted' : (t.propriedade === 'owned' ? 'owned' : null),
+        renavam: textoLimpo(t.renavam, 20),
+        chassi: textoLimpo(t.chassi, 30),
+        antt: textoLimpo(t.antt, 20),
+        proprietario: textoLimpo(t.proprietario, 120),
+        capacidade_kg: t.capacidade_kg == null || t.capacidade_kg === '' ? null : Number(t.capacidade_kg),
+        obs_tms: textoLimpo(t.obs, 400),
+        fora_do_tms: false,
+      };
+      if (!v) {
+        v = Object.assign({ id: nextId('veiculos'), tms_id: String(t.tms_id), frota: null, marca: null, modelo: null, ano: null, km_atual: null, obs: null, created_at: agora },
+          dados, { updated_at: agora, sincronizado_em: agora });
+        DB.veiculos.push(v);
+        res.novos += 1;
+      } else {
+        const mudou = Object.keys(dados).some((k) => v[k] !== dados[k]);
+        Object.assign(v, dados, { sincronizado_em: agora });
+        if (mudou) { v.updated_at = agora; res.atualizados += 1; }
+      }
+      vistos.add(v.id);
+      res.total += 1;
+      if (dados.arquivado) res.arquivados += 1;
+    }
+    for (const v of DB.veiculos) {
+      if (!vistos.has(v.id) && !v.fora_do_tms) { v.fora_do_tms = true; v.updated_at = agora; res.fora += 1; }
+    }
+    DB.settings.tms_sync = { em: agora, ok: true, erro: null, total: res.total };
+    if (res.novos || res.atualizados || res.vinculados || res.fora) {
+      audit(autor || 'Sincronização TMS', 'sincronizar', 'veiculo', null, 'TMS',
+        `Veículos e reboques do TMS: ${res.total} na lista — ${res.novos} novo(s), ${res.atualizados} atualizado(s)`
+        + (res.vinculados ? `, ${res.vinculados} ligado(s) pela placa` : '') + (res.fora ? `, ${res.fora} fora do TMS` : ''));
+    }
+    persist();
+    return res;
+  }
+  function registrarFalhaTms(erro) {
+    DB.settings.tms_sync = Object.assign({}, DB.settings.tms_sync || {}, { falha_em: nowLocal(), ok: false, erro: String(erro || 'Falha').slice(0, 300) });
+    persist();
+  }
+  const statusTms = () => (DB.settings.tms_sync ? Object.assign({}, DB.settings.tms_sync) : null);
+
+  // Campos da manutenção (parcial = só os enviados). Devolve { campos } ou { erro }.
+  function camposManutencao(b, parcial) {
+    const out = {};
+    if (!parcial || has(b, 'veiculo_id')) {
+      const v = veiculoPorId(b.veiculo_id);
+      if (!v) return { erro: 'Escolha o veículo.' };
+      out.veiculo_id = v.id;
+      out.placa = v.placa; // cópia para o histórico continuar legível
+    }
+    if (!parcial || has(b, 'data')) {
+      const d = String(b.data || '').slice(0, 10);
+      if (!dataValida(d)) return { erro: 'Data da manutenção vazia ou inválida (use dd/mm/aaaa).' };
+      if (d > nowLocal().slice(0, 10)) return { erro: 'A data da manutenção não pode ser no futuro.' };
+      out.data = d;
+    }
+    if (!parcial || has(b, 'servico')) {
+      const s = textoLimpo(b.servico, 120);
+      if (!s) return { erro: 'Informe o serviço feito.' };
+      out.servico = s;
+    }
+    if (!parcial || has(b, 'tipo')) out.tipo = b.tipo === 'corretiva' ? 'corretiva' : 'preventiva';
+    if (!parcial || has(b, 'km')) {
+      const k = inteiroOuNull(b.km);
+      if (k != null && k > 9999999) return { erro: 'Km inválido.' };
+      out.km = k;
+    }
+    if (!parcial || has(b, 'custo_cents')) {
+      const c = b.custo_cents == null || b.custo_cents === '' ? null : parseInt(b.custo_cents, 10);
+      if (c != null && (isNaN(c) || c < 0 || c > 100000000000)) return { erro: 'Custo inválido.' };
+      out.custo_cents = c;
+    }
+    if (!parcial || has(b, 'oficina')) out.oficina = textoLimpo(b.oficina, 80);
+    if (!parcial || has(b, 'obs')) out.obs = textoLimpo(b.obs, 500);
+    return { campos: out };
+  }
+
+  // Números do veículo a partir das manutenções (lista e ficha).
+  function resumoVeiculo(v) {
+    let ultima = null, custo = 0, prev = 0, corr = 0, total = 0;
+    for (const m of DB.manutencoes) {
+      if (m.veiculo_id !== v.id) continue;
+      total += 1;
+      custo += m.custo_cents || 0;
+      if (m.tipo === 'corretiva') corr += 1; else prev += 1;
+      if (!ultima || m.data > ultima.data || (m.data === ultima.data && m.id > ultima.id)) ultima = m;
+    }
+    return Object.assign({}, v, {
+      manutencoes: total, preventivas: prev, corretivas: corr, custo_total_cents: custo,
+      ultima: ultima ? { id: ultima.id, data: ultima.data, servico: ultima.servico, km: ultima.km, tipo: ultima.tipo } : null,
+    });
+  }
+  function manutencaoView(m) {
+    const v = veiculoPorId(m.veiculo_id);
+    return Object.assign({}, m, {
+      placa: v ? v.placa : m.placa,
+      veiculo: v ? { id: v.id, placa: v.placa, frota: v.frota, marca: v.marca, modelo: v.modelo } : null,
+    });
+  }
+  // Quilometragem do veículo acompanha a manutenção mais alta registrada.
+  function atualizarKmVeiculo(v, km) {
+    if (km == null || !v) return false;
+    if (v.km_atual == null || km > v.km_atual) { v.km_atual = km; v.updated_at = nowLocal(); return true; }
+    return false;
+  }
+  const normFrota = (x) => { const t = String(x == null ? '' : x).trim().toLowerCase(); return /^\d+$/.test(t) ? String(parseInt(t, 10)) : t; };
+  const chaveManutencao = (m) => [m.veiculo_id, m.data, String(m.servico || '').trim().toLowerCase(), m.km == null ? '' : m.km].join('|');
+
+  // Nota fiscal anexada à entrada de estoque: o arquivo é gravado pelo servidor
+  // (server.js) e chega aqui só o nome, pelo "extra" da requisição — o corpo
+  // enviado pelo navegador nunca define qual arquivo fica registrado.
+  function notaFiscalDoPedido() {
+    const n = reqExtra && reqExtra.nf;
+    if (!n || typeof n !== 'object') return null;
+    const arquivo = String(n.arquivo || '');
+    if (!/^nf-(material|frota)-\d+-[0-9a-f]{12}\.(pdf|jpg|png|webp)$/.test(arquivo)) return null;
+    return {
+      arquivo,
+      nome: n.nome_original ? String(n.nome_original).slice(0, 160) : null,
+      tipo: n.tipo ? String(n.tipo).slice(0, 40) : null,
+      tamanho: typeof n.tamanho === 'number' ? n.tamanho : null,
+    };
+  }
+
   // Movimentação de estoque (materiais e frota) montada a partir da auditoria.
   // Registros novos trazem "meta"; os antigos são lidos do texto dos detalhes.
   function movimentoDe(r) {
     const mv = {
       id: r.id, ts: r.ts, actor: r.actor, action: r.action, item_id: r.entity_id, item: r.entity_label,
-      qtd: null, unidade: null, estoque: null, placa: null, motivo: null, inicial: false,
+      qtd: null, unidade: null, estoque: null, placa: null, motivo: null, inicial: false, nf: null,
       detalhes: r.details == null ? null : String(r.details),
     };
     const m = r.meta && typeof r.meta === 'object' ? r.meta : null;
     if (m) {
-      for (const k of ['qtd', 'unidade', 'estoque', 'placa', 'motivo']) if (m[k] != null) mv[k] = m[k];
+      for (const k of ['qtd', 'unidade', 'estoque', 'placa', 'motivo', 'nf']) if (m[k] != null) mv[k] = m[k];
       mv.inicial = !!m.inicial;
       return mv;
     }
@@ -903,6 +1154,7 @@
     assets: 'equipamentos', peripherals: 'equipamentos', people: 'pessoas', rooms: 'salas',
     homeoffice: 'homeoffice', epi: 'epis', materiais: 'materiais', frota: 'frota',
     inventory: 'inventario', inspections: 'inspecao', config: 'config',
+    veiculos: 'veiculos', manutencoes: 'manutencoes',
   };
   function acaoExigida(method, seg) {
     if (method === 'GET' || method === 'HEAD') return null;
@@ -929,6 +1181,9 @@
       else nivel = 'criar';                                        // conferir
     } else if (r1 === 'inspections') {
       nivel = 'criar'; // a rota confere se é o dono do rascunho ou se tem controle total
+    } else if (r1 === 'veiculos' || r1 === 'manutencoes') {
+      if (!s2 || s2 === 'importar') nivel = 'criar';             // cadastro e importação
+      else nivel = method === 'DELETE' ? 'excluir' : 'editar';
     } else if (r1 === 'config') {
       nivel = 'editar';
     } else {
@@ -1316,8 +1571,9 @@
           const nid = nextId('materiais');
           const row = { id: nid, nome, quantidade, minimo, created_at: nowLocal(), updated_at: nowLocal() };
           DB.materiais.push(row);
-          audit(actor, 'criar', 'material', nid, nome, `Material cadastrado — ${quantidade} un. em estoque`,
-            { qtd: quantidade, unidade: 'un', estoque: quantidade, inicial: true });
+          const nfCad = notaFiscalDoPedido();
+          audit(actor, 'criar', 'material', nid, nome, `Material cadastrado — ${quantidade} un. em estoque${nfCad ? ' — NF anexada' : ''}`,
+            Object.assign({ qtd: quantidade, unidade: 'un', estoque: quantidade, inicial: true }, nfCad ? { nf: nfCad } : {}));
           persist();
           return ok(row, 201);
         }
@@ -1352,9 +1608,11 @@
         cur.quantidade = novo;
         cur.updated_at = nowLocal();
         const motivo = body.motivo ? ' — ' + String(body.motivo).slice(0, 200) : '';
+        const nfEnt = delta > 0 ? notaFiscalDoPedido() : null;
         audit(actor, delta > 0 ? 'entrada' : 'saida', 'material', cur.id, cur.nome,
-          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} un. (estoque: ${novo})${motivo}`,
-          { qtd: delta, unidade: 'un', estoque: novo, motivo: body.motivo ? String(body.motivo).slice(0, 200) : null });
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} un. (estoque: ${novo})${motivo}${nfEnt ? ' — NF anexada' : ''}`,
+          Object.assign({ qtd: delta, unidade: 'un', estoque: novo, motivo: body.motivo ? String(body.motivo).slice(0, 200) : null },
+            nfEnt ? { nf: nfEnt } : {}));
         persist();
         return ok(cur);
       }
@@ -1401,8 +1659,9 @@
             created_at: nowLocal(), updated_at: nowLocal(),
           };
           DB.frota_itens.push(row);
-          audit(actor, 'criar', 'frota', nid, nome, `Item de frota cadastrado (${catLabel(categoria)}) — ${quantidade} ${unidade} em estoque`,
-            { qtd: quantidade, unidade, estoque: quantidade, inicial: true });
+          const nfCad = notaFiscalDoPedido();
+          audit(actor, 'criar', 'frota', nid, nome, `Item de frota cadastrado (${catLabel(categoria)}) — ${quantidade} ${unidade} em estoque${nfCad ? ' — NF anexada' : ''}`,
+            Object.assign({ qtd: quantidade, unidade, estoque: quantidade, inicial: true }, nfCad ? { nf: nfCad } : {}));
           persist();
           return ok(row, 201);
         }
@@ -1440,9 +1699,11 @@
         const placa = texto(body.placa, 12);
         const motivo = texto(body.motivo, 200);
         const extras = [placa ? 'veículo ' + placa.toUpperCase() : '', motivo].filter(Boolean).join(' — ');
+        const nfEnt = delta > 0 ? notaFiscalDoPedido() : null;
         audit(actor, delta > 0 ? 'entrada' : 'saida', 'frota', cur.id, cur.nome,
-          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} ${cur.unidade} (estoque: ${novo})${extras ? ' — ' + extras : ''}`,
-          { qtd: delta, unidade: cur.unidade, estoque: novo, placa: placa ? placa.toUpperCase() : null, motivo });
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} ${cur.unidade} (estoque: ${novo})${extras ? ' — ' + extras : ''}${nfEnt ? ' — NF anexada' : ''}`,
+          Object.assign({ qtd: delta, unidade: cur.unidade, estoque: novo, placa: placa ? placa.toUpperCase() : null, motivo },
+            nfEnt ? { nf: nfEnt } : {}));
         persist();
         return ok(cur);
       }
@@ -1450,6 +1711,135 @@
         DB.frota_itens = DB.frota_itens.filter((f) => f !== cur);
         audit(actor, 'excluir', 'frota', cur.id, cur.nome, `Item de frota excluído (estoque: ${cur.quantidade} ${cur.unidade})`,
           { estoque: cur.quantidade, unidade: cur.unidade });
+        persist();
+        return ok({ ok: true });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
+    // --- frota: veículos (a lista vem do TMS; aqui só se completam dados de manutenção) ---
+    if (r1 === 'veiculos') {
+      const id = seg[2];
+      if (!id) {
+        if (method === 'GET') {
+          const todos = query.todos === '1';
+          const rows = DB.veiculos.filter((v) => todos || (!v.fora_do_tms && !v.arquivado))
+            .sort((a, b) => ((a.categoria === 'reboque') - (b.categoria === 'reboque')) || ((!a.frota) - (!b.frota))
+              || String(a.frota || '').localeCompare(String(b.frota || ''), 'pt-BR', { numeric: true })
+              || String(a.placa).localeCompare(String(b.placa)))
+            .map(resumoVeiculo);
+          return ok(rows);
+        }
+        if (method === 'POST') return fail(400, MSG_VEICULOS_DO_TMS);
+        return fail(404, 'Rota não encontrada');
+      }
+      if (id === 'importar') return fail(400, MSG_VEICULOS_DO_TMS);
+      const cur = veiculoPorId(id);
+      if (!cur) return fail(404, 'Veículo não encontrado');
+      if (method === 'GET') {
+        const manut = DB.manutencoes.filter((m) => m.veiculo_id === cur.id)
+          .sort((a, b) => String(b.data).localeCompare(String(a.data)) || b.id - a.id)
+          .map(manutencaoView);
+        return ok(Object.assign(resumoVeiculo(cur), { historico: manut }));
+      }
+      if (method === 'PUT') {
+        const r = camposVeiculo(body, true);
+        if (r.erro) return fail(400, r.erro);
+        const mud = [];
+        for (const k of Object.keys(r.campos)) {
+          if (cur[k] !== r.campos[k]) {
+            mud.push(k === 'km_atual' ? `km ${cur[k] == null ? '—' : fmtKm(cur[k])} → ${r.campos[k] == null ? '—' : fmtKm(r.campos[k])}` : (CAMPO_VEICULO[k] || k));
+          }
+          cur[k] = r.campos[k];
+        }
+        cur.updated_at = nowLocal();
+        audit(actor, 'editar', 'veiculo', cur.id, cur.placa, mud.length ? 'Dados de manutenção atualizados — ' + mud.join(', ') : 'Dados de manutenção atualizados');
+        persist();
+        return ok(resumoVeiculo(cur));
+      }
+      if (method === 'DELETE') return fail(400, MSG_VEICULOS_DO_TMS);
+      return fail(404, 'Rota não encontrada');
+    }
+
+    // --- frota: manutenções (histórico por veículo) ---
+    if (r1 === 'manutencoes') {
+      const id = seg[2];
+      if (!id) {
+        if (method === 'GET') {
+          let rows = DB.manutencoes.slice();
+          if (query.veiculo_id) rows = rows.filter((m) => String(m.veiculo_id) === String(query.veiculo_id));
+          if (query.tipo) rows = rows.filter((m) => m.tipo === query.tipo);
+          if (query.desde) rows = rows.filter((m) => String(m.data) >= String(query.desde));
+          if (query.ate) rows = rows.filter((m) => String(m.data) <= String(query.ate));
+          rows.sort((a, b) => String(b.data).localeCompare(String(a.data)) || b.id - a.id);
+          return ok(rows.map(manutencaoView));
+        }
+        if (method === 'POST') {
+          const r = camposManutencao(body, false);
+          if (r.erro) return fail(400, r.erro);
+          const nid = nextId('manutencoes');
+          const row = Object.assign({ id: nid }, r.campos, { created_at: nowLocal(), created_by: actor, updated_at: nowLocal() });
+          DB.manutencoes.push(row);
+          const v = veiculoPorId(row.veiculo_id);
+          const kmAtualizado = atualizarKmVeiculo(v, row.km);
+          audit(actor, 'criar', 'manutencao', nid, `${row.placa} · ${row.servico}`,
+            [rotuloCatalogo(CATALOG.tiposManutencao, row.tipo) + ' em ' + row.data.split('-').reverse().join('/'),
+              row.km != null ? fmtKm(row.km) : '', row.custo_cents != null ? reais(row.custo_cents) : '',
+              kmAtualizado ? 'km do veículo atualizado' : ''].filter(Boolean).join(' — '));
+          persist();
+          return ok(manutencaoView(row), 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+      // Importação do histórico: cada linha acha o veículo pela placa ou pelo nº da frota.
+      if (id === 'importar' && method === 'POST') {
+        const linhas = Array.isArray(body.linhas) ? body.linhas.slice(0, 5000) : [];
+        if (!linhas.length) return fail(400, 'A planilha não tem linhas para importar.');
+        const res = { criados: 0, ignorados: [], erros: [] };
+        const existentes = new Set(DB.manutencoes.map(chaveManutencao));
+        const kmVeic = {};
+        linhas.forEach((ln, i) => {
+          const linha = ln && ln.linha ? ln.linha : i + 2;
+          const ref = String((ln && (ln.placa || ln.frota)) || '').trim();
+          const placa = normPlaca(ln && ln.placa);
+          const v = (placa && DB.veiculos.find((x) => x.placa === placa))
+            || (ln && ln.frota ? DB.veiculos.find((x) => x.frota && normFrota(x.frota) === normFrota(ln.frota)) : null);
+          if (!v) { res.erros.push({ linha, motivo: ref ? `Veículo “${ref}” não cadastrado` : 'Linha sem placa nem nº da frota' }); return; }
+          const r = camposManutencao(Object.assign({}, ln, { veiculo_id: v.id }), false);
+          if (r.erro) { res.erros.push({ linha, motivo: r.erro }); return; }
+          const chave = chaveManutencao(r.campos);
+          if (existentes.has(chave)) { res.ignorados.push({ linha, motivo: 'Manutenção já registrada (mesmo veículo, data, serviço e km)' }); return; }
+          existentes.add(chave);
+          DB.manutencoes.push(Object.assign({ id: nextId('manutencoes') }, r.campos, { created_at: nowLocal(), created_by: actor, updated_at: nowLocal(), importada: true }));
+          if (atualizarKmVeiculo(v, r.campos.km)) kmVeic[v.placa] = v.km_atual;
+          res.criados += 1;
+        });
+        if (res.criados) {
+          audit(actor, 'importar', 'manutencao', null, textoLimpo(body.arquivo, 120) || 'Planilha',
+            `Importação de manutenções: ${res.criados} registrada(s), ${res.ignorados.length} ignorada(s), ${res.erros.length} com erro`
+            + (Object.keys(kmVeic).length ? ` — km atualizado em ${Object.keys(kmVeic).length} veículo(s)` : ''));
+          persist();
+        }
+        return ok(res);
+      }
+      const cur = DB.manutencoes.find((m) => String(m.id) === String(id));
+      if (!cur) return fail(404, 'Manutenção não encontrada');
+      if (method === 'GET') return ok(manutencaoView(cur));
+      if (method === 'PUT') {
+        const r = camposManutencao(body, true);
+        if (r.erro) return fail(400, r.erro);
+        const mud = Object.keys(r.campos).filter((k) => k !== 'placa' && cur[k] !== r.campos[k]).map((k) => CAMPO_MANUT[k] || k);
+        Object.assign(cur, r.campos, { updated_at: nowLocal() });
+        const kmAtualizado = atualizarKmVeiculo(veiculoPorId(cur.veiculo_id), cur.km);
+        audit(actor, 'editar', 'manutencao', cur.id, `${cur.placa} · ${cur.servico}`,
+          (mud.length ? 'Manutenção corrigida — ' + mud.join(', ') : 'Manutenção corrigida') + (kmAtualizado ? ' — km do veículo atualizado' : ''));
+        persist();
+        return ok(manutencaoView(cur));
+      }
+      if (method === 'DELETE') {
+        DB.manutencoes = DB.manutencoes.filter((m) => m !== cur);
+        audit(actor, 'excluir', 'manutencao', cur.id, `${cur.placa} · ${cur.servico}`,
+          `Manutenção de ${String(cur.data).split('-').reverse().join('/')} excluída`);
         persist();
         return ok({ ok: true });
       }
@@ -2379,6 +2769,9 @@
   global.Patrimonio = {
     request,
     pode: podeAtor, // usado pelo servidor nas rotas que não passam pelo store (backup)
+    sincronizarVeiculosTms, // o servidor busca no TMS e entrega a lista aqui
+    registrarFalhaTms,
+    statusTms,
     qrDataUrl,
     dump,
     restore,
