@@ -200,6 +200,32 @@ Por padrão, os dados definitivos ficam em:
 /var/lib/controle-patrimonial/nf-anexos/
 ```
 
+## Veículos do TMS
+
+A aba **Frota ▸ Veículos** mostra os veículos e reboques cadastrados no TMS
+(`tms.braziltransports.com.br`). O servidor entra no TMS com uma conta própria
+para isso e lê a frota ao iniciar e a cada 15 minutos. Para ligar:
+
+1. No TMS, um administrador cria uma conta para a integração (ex.:
+   `integracao.patrimonio@braziltransports.com.br`) com o perfil
+   **Coordenador de frota** — o mais restrito que enxerga a frota — e entra
+   uma vez com ela pelo navegador para trocar a senha provisória.
+2. Em `/etc/controle-patrimonial/sistema.env`, acrescente:
+
+   ```text
+   PAT_TMS_EMAIL=integracao.patrimonio@braziltransports.com.br
+   PAT_TMS_SENHA=a-senha-definida-no-passo-1
+   # opcionais
+   PAT_TMS_URL=https://tms.braziltransports.com.br
+   PAT_TMS_INTERVALO_MIN=15
+   ```
+
+3. Reinicie só o serviço `controle-patrimonial` em janela combinada.
+
+A senha fica apenas nesse arquivo (permissão 0600): não vai para a base, para o
+log nem para o navegador. Se o login falhar, a aba Veículos mostra o motivo e
+continua com a lista da última sincronização que deu certo.
+
 Inclua toda a pasta `/var/lib/controle-patrimonial` no backup externo da VM.
 Snapshots do VirtualBox não substituem backup dos dados e nunca devem ser
 criados por um agente sem autorização explícita do administrador.

@@ -1096,3 +1096,16 @@ textarea.insp-texto { max-width: 100%; resize: vertical; }
   .viz-grid2 { grid-template-columns: minmax(0, 1fr); }
   .hbar { grid-template-columns: minmax(84px, 42%) minmax(0, 1fr) 28px; }
 }
+
+/* ===================== Veículos do TMS ===================== */
+.tms-barra {
+  display: flex; flex-direction: column; gap: 2px; margin-bottom: 16px; padding: 11px 14px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); font-size: 13px;
+}
+.tms-barra span { color: var(--muted); }
+.tms-barra.ok { border-left: 4px solid var(--accent); }
+.tms-barra.aviso { border-left: 4px solid var(--gold); background: var(--gold-faint); }
+.tms-barra.erro { border-left: 4px solid var(--danger); background: var(--danger-soft); }
+.vf-tms-info { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 13px; }
+.vf-tms-info .hint { flex-basis: 100%; margin: 0; }
+.vf-kv { margin: 0; }

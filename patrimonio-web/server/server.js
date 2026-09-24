@@ -81,6 +81,101 @@ function salvarNotaFiscal(tipo, nf) {
   const nome = String((nf && nf.nome) || '').replace(/[\\/\r\n\t]+/g, ' ').trim().slice(0, 160) || null;
   return { info: { arquivo, nome_original: nome, tipo: cab[1], tamanho: buf.length } };
 }
+
+// ---------------------------------------------------------------------------
+// Veículos do TMS (tms.braziltransports.com.br) — o TMS é o cadastro oficial de
+// veículos e reboques. Com PAT_TMS_EMAIL e PAT_TMS_SENHA definidos, o servidor
+// entra no TMS com essa conta (perfil com a permissão de frota, de preferência
+// "Coordenador de frota"), lê veículos e reboques e atualiza a lista local ao
+// iniciar e a cada PAT_TMS_INTERVALO_MIN minutos. A senha fica só no ambiente do
+// servidor: nunca vai para a base, para o log nem para o navegador.
+// ---------------------------------------------------------------------------
+const TMS = {
+  url: String(process.env.PAT_TMS_URL || 'https://tms.braziltransports.com.br').replace(/\/+$/, ''),
+  email: String(process.env.PAT_TMS_EMAIL || '').trim(),
+  senha: String(process.env.PAT_TMS_SENHA || ''),
+  intervaloMin: Math.max(5, parseInt(process.env.PAT_TMS_INTERVALO_MIN, 10) || 15),
+};
+const tmsConfigurado = () => !!(TMS.email && TMS.senha);
+let tmsRodando = null;     // sincronização em andamento (uma de cada vez)
+let tmsUltimoPedido = 0;   // trava do botão "Sincronizar agora"
+
+async function tmsFetch(caminho, opts) {
+  const ctrl = new AbortController();
+  const limite = setTimeout(() => ctrl.abort(), 20000);
+  try { return await fetch(TMS.url + caminho, Object.assign({ signal: ctrl.signal, redirect: 'manual' }, opts)); }
+  finally { clearTimeout(limite); }
+}
+// Cookies de sessão devolvidos pelo login (o Supabase pode dividir em .0, .1…).
+function tmsCookies(res) {
+  const lista = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  return lista.map((c) => String(c).split(';')[0].trim()).filter((c) => c.includes('=')).join('; ');
+}
+async function tmsJson(res, oque) {
+  let dados = null;
+  try { dados = await res.json(); } catch (e) { /* resposta sem JSON */ }
+  if (!res.ok) {
+    const err = (dados && dados.error) || {};
+    const e = new Error(`${oque}: ${err.message || 'HTTP ' + res.status}`);
+    e.status = res.status;
+    e.code = err.code;
+    throw e;
+  }
+  return dados || {};
+}
+const tmsVeiculo = (v) => ({
+  tms_id: 'v:' + v.id, categoria: 'veiculo', placa: v.plate, tipo: v.vehicleType, status: v.status, arquivado: !!v.archived,
+  propriedade: v.ownershipType || null, renavam: v.renavam, chassi: v.chassis, antt: v.anttNumber,
+  proprietario: v.owner, capacidade_kg: v.capacityKg, obs: v.notes,
+});
+const tmsReboque = (r) => ({
+  tms_id: 'r:' + r.id, categoria: 'reboque', placa: r.plate, tipo: r.trailerType, status: r.status, arquivado: !!r.archived,
+  propriedade: r.ownershipType || null, renavam: null, chassi: null, antt: null,
+  proprietario: r.owner, capacidade_kg: r.capacityKg, obs: r.notes,
+});
+
+function sincronizarTms(origem) {
+  if (!tmsConfigurado()) return Promise.resolve({ ok: false, configurado: false, erro: 'A conexão com o TMS ainda não foi configurada no servidor.' });
+  if (tmsRodando) return tmsRodando;
+  tmsRodando = (async () => {
+    let cookie = '';
+    try {
+      const login = await tmsFetch('/api/auth/sign-in', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email: TMS.email, password: TMS.senha }),
+      });
+      const dl = await tmsJson(login, 'Login no TMS');
+      cookie = tmsCookies(login);
+      if (!cookie) throw new Error('Login no TMS: o TMS não devolveu a sessão.');
+      if (dl.redirectTo === '/auth/set-password') {
+        throw Object.assign(new Error('senha provisória'), { code: 'PASSWORD_CHANGE_REQUIRED' });
+      }
+      const h = { Cookie: cookie, Accept: 'application/json' };
+      const rv = await tmsJson(await tmsFetch('/api/master-data/vehicles?includeArchived=true', { headers: h }), 'Veículos do TMS');
+      const rr = await tmsJson(await tmsFetch('/api/master-data/trailers?includeArchived=true', { headers: h }), 'Reboques do TMS');
+      const lista = (rv.items || []).map(tmsVeiculo).concat((rr.items || []).map(tmsReboque));
+      const r = db.sincronizarVeiculosTms(lista, 'Sincronização TMS');
+      if (r.novos || r.atualizados || r.vinculados || r.fora) notifyChange('/api/veiculos', 'POST', 'Sincronização TMS', { headers: {} });
+      console.log(`[Controle Patrimonial] TMS (${origem}): ${r.total} veículo(s)/reboque(s) — ${r.novos} novo(s), ${r.atualizados} atualizado(s), ${r.vinculados} ligado(s) pela placa, ${r.fora} fora do TMS.`);
+      return Object.assign({ ok: true, configurado: true }, r);
+    } catch (e) {
+      let msg = e.message || 'Falha ao falar com o TMS.';
+      if (e.name === 'AbortError') msg = 'O TMS não respondeu a tempo.';
+      else if (e.code === 'PASSWORD_CHANGE_REQUIRED') msg = 'A conta do TMS usada pelo sistema ainda está com a senha provisória: entre uma vez com ela pelo navegador, defina a senha definitiva e atualize PAT_TMS_SENHA.';
+      else if (e.status === 401) msg = 'O TMS recusou o login (e-mail ou senha). Confira PAT_TMS_EMAIL e PAT_TMS_SENHA.';
+      else if (e.status === 403) msg = 'A conta do TMS não tem permissão para ver a frota. Use uma conta com perfil de Coordenador de frota.';
+      else if (!e.status) msg = 'Não foi possível falar com o TMS (' + (e.cause && e.cause.code ? e.cause.code : msg) + ').';
+      db.registrarFalhaTms(msg);
+      console.warn('[Controle Patrimonial] TMS (' + origem + '): ' + msg);
+      return { ok: false, configurado: true, erro: msg };
+    } finally {
+      if (cookie) tmsFetch('/api/auth/sign-out', { method: 'POST', headers: { Cookie: cookie } }).catch(() => {});
+      tmsRodando = null;
+    }
+  })();
+  return tmsRodando;
+}
 const zlib = require('zlib');
 
 // Decodifica um PNG RGB 8 bits (colorType 2, sem entrelaçamento) para RGB cru —
@@ -844,6 +939,27 @@ function handleApi(req, res) {
         if (rc.ok) notifyChange(urlPath, 'DELETE', operator, req);
         return sendJson(res, rc.status || 200, rc.ok ? rc.data : (rc.data || { error: 'Erro' }));
       }
+      // Veículos do TMS: situação da sincronização e o "Sincronizar agora".
+      if (urlPath === '/api/veiculos/sincronizacao' && req.method === 'GET') {
+        return sendJson(res, 200, {
+          configurado: tmsConfigurado(), url: TMS.url, intervalo_min: TMS.intervaloMin,
+          rodando: !!tmsRodando, ultima: db.statusTms(),
+        });
+      }
+      if (urlPath === '/api/veiculos/sincronizar' && req.method === 'POST') {
+        if (!db.pode(operator, 'veiculos', 'ver')) return sendJson(res, 403, { error: 'Seu usuário não tem acesso à aba Veículos.' });
+        if (!tmsConfigurado()) {
+          return sendJson(res, 400, { error: 'A conexão com o TMS ainda não foi configurada no servidor (PAT_TMS_EMAIL e PAT_TMS_SENHA).' });
+        }
+        if (!tmsRodando && Date.now() - tmsUltimoPedido < 30000) {
+          return sendJson(res, 429, { error: 'A lista acabou de ser atualizada. Aguarde alguns segundos.' });
+        }
+        tmsUltimoPedido = Date.now();
+        sincronizarTms('manual')
+          .then((r) => sendJson(res, r.ok ? 200 : 502, r.ok ? r : { error: r.erro }))
+          .catch((e) => sendJson(res, 500, { error: (e && e.message) || 'Falha na sincronização.' }));
+        return undefined;
+      }
       // Entrada de estoque (ou cadastro com estoque inicial) com a nota fiscal
       // anexada: grava o arquivo aqui e passa para a base só o nome, pelo
       // "extra" da requisição (o corpo vindo do navegador não define arquivo).
@@ -948,3 +1064,12 @@ process.once('SIGTERM', () => encerrarServidor('SIGTERM'));
 // Snapshot automático periódico (rede de segurança adicional).
 const SNAP_MS = parseInt(process.env.PAT_SNAPSHOT_MS, 10) || 6 * 60 * 60 * 1000; // 6 h
 setInterval(() => { try { db.snapshot('auto'); } catch (e) { /* ignore */ } }, SNAP_MS).unref();
+
+// Veículos do TMS: primeira leitura logo depois de subir e depois no intervalo.
+if (tmsConfigurado()) {
+  console.log(`[Controle Patrimonial] veículos do TMS: ${TMS.url}, a cada ${TMS.intervaloMin} min.`);
+  setTimeout(() => { sincronizarTms('início'); }, 10 * 1000).unref();
+  setInterval(() => { sincronizarTms('automática'); }, TMS.intervaloMin * 60 * 1000).unref();
+} else {
+  console.log('[Controle Patrimonial] veículos do TMS: conexão não configurada (PAT_TMS_EMAIL e PAT_TMS_SENHA).');
+}

@@ -2547,7 +2547,7 @@
     if (sinal < 0 && pode('veiculos', 'ver')) {
       api('/api/veiculos').then((vs) => {
         const dl = $('fa-placas');
-        if (dl) dl.innerHTML = vs.filter((v) => v.situacao !== 'inativo').map((v) => `<option value="${escapeHtml(v.placa)}">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', v.marca, v.modelo].filter(Boolean).join(' · '))}</option>`).join('');
+        if (dl) dl.innerHTML = vs.filter((v) => !foraDaLista(v)).map((v) => `<option value="${escapeHtml(v.placa)}">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', v.marca, v.modelo].filter(Boolean).join(' · '))}</option>`).join('');
       }).catch(() => {});
     }
     $('fa-cancelar').onclick = closeDrawer;
@@ -2575,9 +2575,10 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Frota ▸ Veículos e Manutenções — cadastro de cada veículo (à mão ou por
-  // planilha), histórico de manutenções e os números: por mês, por tipo, por
-  // serviço e por veículo. Preventiva e Corretiva têm cores fixas em todas as
+  // Frota ▸ Veículos e Manutenções — os veículos e reboques vêm do TMS
+  // (tms.braziltransports.com.br, sincronizado pelo servidor); aqui ficam o
+  // histórico de manutenções e os números: por mês, por tipo, por serviço e
+  // por veículo. Preventiva e Corretiva têm cores fixas em todas as
   // telas (azul e laranja: par validado para daltonismo nos dois temas) e
   // sempre aparecem com o nome ao lado — a cor nunca carrega o sentido sozinha.
   // ---------------------------------------------------------------------------
@@ -2600,9 +2601,41 @@
     const a = new Date(y, m - 1, d); const h = new Date(); h.setHours(0, 0, 0, 0);
     return Math.max(0, Math.round((h - a) / 86400000));
   }
-  function situacaoPill(k) {
-    const cls = k === 'manutencao' ? 'warn' : (k === 'inativo' ? 'na' : 'ok');
-    return `<span class="s5-chip ${cls}">${escapeHtml(rotuloDe(situacoesVeiculo(), k || 'ativo'))}</span>`;
+  const propriedadesVeiculo = () => state.catalog.propriedadesVeiculo || [];
+  const foraDaLista = (v) => !!(v.arquivado || v.fora_do_tms);
+  function statusVeiculoPill(v) {
+    if (v.fora_do_tms) return '<span class="s5-chip bad">Fora do TMS</span>';
+    if (v.arquivado) return '<span class="s5-chip na">Arquivado no TMS</span>';
+    const cls = { active: 'ok', maintenance: 'warn', unavailable: 'bad', blocked: 'bad', inactive: 'na' }[v.status] || 'na';
+    return `<span class="s5-chip ${cls}">${escapeHtml(rotuloDe(situacoesVeiculo(), v.status || 'active'))}</span>`;
+  }
+  const rotuloVeiculoCurto = (v) => v.placa + (v.frota ? ' · Frota ' + v.frota : '') + ' · ' + (v.modelo || rotuloDe(tiposVeiculo(), v.tipo))
+    + (v.fora_do_tms ? ' (fora do TMS)' : (v.arquivado ? ' (arquivado)' : ''));
+  // Barra com a situação da sincronização com o TMS (lista, ficha e cadastro).
+  function tmsBarraHtml(st, n) {
+    if (!st) return '';
+    const u = st.ultima || {};
+    const quando = (ts) => (ts ? fmtDateTime(ts) : '');
+    if (!st.configurado) {
+      return `<div class="tms-barra aviso"><strong>A lista de veículos vem do TMS, mas a conexão ainda não foi configurada no servidor.</strong>
+        <span>Um administrador precisa definir PAT_TMS_EMAIL e PAT_TMS_SENHA com uma conta do TMS que tenha o perfil de Coordenador de frota. ${u.em ? 'Enquanto isso, fica valendo a lista da última sincronização, de ' + escapeHtml(quando(u.em)) + '.' : ''}</span></div>`;
+    }
+    if (u.ok === false) {
+      return `<div class="tms-barra erro"><strong>Não foi possível atualizar a lista com o TMS${u.falha_em ? ' em ' + escapeHtml(quando(u.falha_em)) : ''}.</strong>
+        <span>${escapeHtml(u.erro || '')} ${u.em ? 'A lista mostrada é a da última sincronização que deu certo, de ' + escapeHtml(quando(u.em)) + '.' : ''}</span></div>`;
+    }
+    return `<div class="tms-barra ok"><strong>Lista do TMS</strong>
+      <span>${n} veículo${n === 1 ? '' : 's'} e reboque${n === 1 ? '' : 's'} · ${u.em ? 'atualizada em ' + escapeHtml(quando(u.em)) : 'ainda não sincronizada'} · atualiza sozinha a cada ${st.intervalo_min} min</span></div>`;
+  }
+  async function sincronizarAgora(btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api('/api/veiculos/sincronizar', { method: 'POST' });
+      const emUso = r.total - (r.arquivados || 0);
+      toast(`Lista atualizada com o TMS: ${emUso} veículo(s) e reboque(s) em uso` + (r.novos ? `, ${r.novos} novo(s)` : '') + (r.fora ? `, ${r.fora} fora do TMS` : '') + '.');
+      rerender();
+    } catch (e) { toast(e.message, 'err'); rerender(); }
+    finally { if (btn) btn.disabled = false; }
   }
   const legendaHtml = () => '<div class="viz-legenda" aria-hidden="true"><span><i class="prev"></i>Preventiva</span><span><i class="corr"></i>Corretiva</span></div>';
 
@@ -2829,23 +2862,25 @@
     raiz.querySelectorAll('[data-excluir]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const m = porId(b.dataset.excluir); if (m) excluirManutencao(m); }; });
   }
 
-  // ---- Veículos: lista ------------------------------------------------------
+  // ---- Veículos: lista (vem do TMS) ------------------------------------------
   async function renderVeiculos() {
-    setTopbar(`<button class="btn btn-ghost" id="vei-importar" data-req="veiculos:criar">⬆ Importar planilha</button>
-      <button class="btn btn-primary" id="vei-novo" data-req="veiculos:criar">+ Novo veículo</button>`);
-    $('vei-importar').onclick = () => importarPlanilha('veiculos');
-    $('vei-novo').onclick = () => veiculoForm(null);
+    setTopbar('<button class="btn btn-ghost" id="vei-sync">⟳ Sincronizar com o TMS</button>');
+    $('vei-sync').onclick = () => sincronizarAgora($('vei-sync'));
     view().innerHTML = '<div class="empty">Carregando…</div>';
     const verManut = pode('manutencoes', 'ver');
     const ano = new Date().getFullYear();
-    const [veiculos, doAno] = await Promise.all([
-      api('/api/veiculos'),
+    const [todos, st, doAno] = await Promise.all([
+      api('/api/veiculos?todos=1'),
+      api('/api/veiculos/sincronizacao').catch(() => null),
       verManut ? api('/api/manutencoes?desde=' + ano + '-01-01') : Promise.resolve(null),
     ]);
-    const ativos = veiculos.filter((v) => v.situacao !== 'inativo').length;
-    const emManut = veiculos.filter((v) => v.situacao === 'manutencao').length;
-    let cards = statCardSub('Veículos cadastrados', veiculos.length, `${ativos} ativo${ativos === 1 ? '' : 's'}`)
-      + statCard('Em manutenção agora', emManut, emManut ? 'is-warn' : '');
+    const naLista = todos.filter((v) => !foraDaLista(v));
+    const nVeic = naLista.filter((v) => v.categoria !== 'reboque').length;
+    const nReb = naLista.length - nVeic;
+    const emManut = naLista.filter((v) => v.status === 'maintenance').length;
+    let cards = statCardSub('Veículos', nVeic, 'no cadastro do TMS')
+      + statCardSub('Reboques', nReb, 'no cadastro do TMS')
+      + statCard('Em manutenção no TMS', emManut, emManut ? 'is-warn' : '');
     if (doAno) {
       const prev = doAno.filter((m) => m.tipo !== 'corretiva').length;
       const corr = doAno.length - prev;
@@ -2854,101 +2889,90 @@
         + statCardSub(`Custo em ${ano}`, fmtCurrency(custo), doAno.length ? 'soma das manutenções do ano' : 'nenhuma manutenção no ano');
     }
     const tipoOpts = '<option value="">Todos os tipos</option>' + tiposVeiculo().map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`).join('');
-    const sitOpts = '<option value="">Todas as situações</option>' + situacoesVeiculo().map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join('');
+    const stOpts = '<option value="">Todos os status</option>' + situacoesVeiculo().map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join('');
     view().innerHTML = `
-      <div class="cards">${cards}</div>
+      ${tmsBarraHtml(st, naLista.length)}
+      <div class="cards cards-compact">${cards}</div>
       <div class="toolbar">
         <div class="search"><input id="vei-q" placeholder="Buscar por placa, nº da frota, marca ou modelo…"></div>
+        <select class="filter" id="vei-cat"><option value="">Veículos e reboques</option><option value="veiculo">Só veículos</option><option value="reboque">Só reboques</option></select>
         <select class="filter" id="vei-tipo">${tipoOpts}</select>
-        <select class="filter" id="vei-sit">${sitOpts}</select>
+        <select class="filter" id="vei-st">${stOpts}</select>
+        <label class="chk"><input type="checkbox" id="vei-fora"> Mostrar arquivados e fora do TMS</label>
       </div>
       <div class="panel"><div id="vei-rows"></div></div>`;
     const draw = () => {
       const term = semAcento($('vei-q').value);
-      const tipo = $('vei-tipo').value, sit = $('vei-sit').value;
-      const rows = veiculos.filter((v) => (!tipo || v.tipo === tipo) && (!sit || v.situacao === sit)
+      const cat = $('vei-cat').value, tipo = $('vei-tipo').value, stt = $('vei-st').value, fora = $('vei-fora').checked;
+      const rows = todos.filter((v) => (fora || !foraDaLista(v)) && (!cat || v.categoria === cat) && (!tipo || v.tipo === tipo) && (!stt || v.status === stt)
         && (!term || semAcento([v.placa, v.frota, v.marca, v.modelo].filter(Boolean).join(' ')).includes(term)));
       $('vei-rows').innerHTML = !rows.length
-        ? `<div class="empty">${veiculos.length ? 'Nenhum veículo para este filtro.' : '<strong>Nenhum veículo cadastrado ainda</strong>Cadastre um a um em “+ Novo veículo” ou traga todos de uma vez em “Importar planilha”.'}</div>`
+        ? `<div class="empty">${todos.length ? 'Nenhum veículo para este filtro.' : '<strong>Nenhum veículo recebido do TMS ainda</strong>Assim que a conexão com o TMS estiver configurada, os veículos e reboques cadastrados lá aparecem aqui. Depois clique em “Sincronizar com o TMS”.'}</div>`
         : `<div class="table-wrap"><table>
-            <thead><tr><th>Veículo</th><th>Modelo</th><th class="num">Km atual</th>${verManut ? '<th>Última manutenção</th><th class="num">Manutenções</th><th class="num">Custo total</th>' : ''}<th>Situação</th><th></th></tr></thead>
+            <thead><tr><th>Veículo</th><th>Tipo</th><th class="num">Km atual</th>${verManut ? '<th>Última manutenção</th><th class="num">Manutenções</th><th class="num">Custo total</th>' : ''}<th>Status no TMS</th><th></th></tr></thead>
             <tbody>${rows.map((v) => `<tr class="clickable" data-id="${v.id}">
-              <td><div class="vei-id"><span class="placa">${escapeHtml(v.placa)}</span>${v.frota ? `<span class="cell-sub">Frota ${escapeHtml(v.frota)}</span>` : ''}</div></td>
-              <td><div class="cell-title">${escapeHtml(descVeiculo(v))}</div><div class="cell-sub">${escapeHtml(rotuloDe(tiposVeiculo(), v.tipo))}</div></td>
+              <td><div class="vei-id"><span class="placa">${escapeHtml(v.placa)}</span>${v.frota || v.modelo ? `<span class="cell-sub">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', [v.marca, v.modelo].filter(Boolean).join(' ')].filter(Boolean).join(' · '))}</span>` : ''}</div></td>
+              <td><div class="cell-title">${escapeHtml(rotuloDe(tiposVeiculo(), v.tipo))}</div><div class="cell-sub">${v.categoria === 'reboque' ? 'Reboque' : 'Veículo'}${v.propriedade ? ' · ' + escapeHtml(rotuloDe(propriedadesVeiculo(), v.propriedade)) : ''}</div></td>
               <td class="num">${escapeHtml(fmtKmTxt(v.km_atual))}</td>
               ${verManut ? `<td>${v.ultima ? `<div class="cell-title">${escapeHtml(v.ultima.servico)}</div><div class="cell-sub">${fmtDate(v.ultima.data)} · ${tipoManutHtml(v.ultima.tipo)}</div>` : '<span class="muted">nenhuma</span>'}</td>
               <td class="num">${v.manutencoes}</td>
               <td class="num">${v.custo_total_cents ? `<span class="val-cur">${fmtCurrency(v.custo_total_cents)}</span>` : '—'}</td>` : ''}
-              <td>${situacaoPill(v.situacao)}</td>
+              <td>${statusVeiculoPill(v)}</td>
               <td><div class="row-actions">
-                <button class="btn btn-mini btn-ghost" data-editar="${v.id}" data-req="veiculos:editar">Editar</button>
-                <button class="btn btn-mini btn-ghost" data-excluir="${v.id}" data-req="veiculos:excluir" title="Excluir veículo">🗑</button>
+                <button class="btn btn-mini btn-ghost" data-editar="${v.id}" data-req="veiculos:editar" title="Nº da frota, marca, modelo, ano e km">Completar dados</button>
               </div></td>
             </tr>`).join('')}</tbody></table></div>`;
-      const porId = (idStr) => veiculos.find((v) => String(v.id) === idStr);
+      const porId = (idStr) => todos.find((v) => String(v.id) === idStr);
       $('vei-rows').querySelectorAll('tr.clickable').forEach((tr) => {
         tr.addEventListener('click', (e) => { if (e.target.closest('.row-actions')) return; location.hash = '#/frota/veiculos/' + tr.dataset.id; });
       });
       $('vei-rows').querySelectorAll('[data-editar]').forEach((b) => { b.onclick = () => { const v = porId(b.dataset.editar); if (v) veiculoForm(v); }; });
-      $('vei-rows').querySelectorAll('[data-excluir]').forEach((b) => {
-        b.onclick = async () => {
-          const v = porId(b.dataset.excluir);
-          if (!v) return;
-          const ok2 = await confirmDialog('Excluir veículo', `Excluir o veículo ${v.placa}? Só dá para excluir veículos sem histórico de manutenção.`, 'Excluir', true);
-          if (!ok2) return;
-          try { await api('/api/veiculos/' + v.id, { method: 'DELETE' }); toast('Veículo excluído.'); rerender(); }
-          catch (e) { toast(e.message, 'err'); }
-        };
-      });
     };
     let deb;
     $('vei-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 200); });
-    $('vei-tipo').addEventListener('change', draw);
-    $('vei-sit').addEventListener('change', draw);
+    ['vei-cat', 'vei-tipo', 'vei-st', 'vei-fora'].forEach((id) => $(id).addEventListener('change', draw));
     draw();
   }
 
+  // Placa, tipo, status e documentos vêm do TMS; aqui se completam os dados de manutenção.
   function veiculoForm(v) {
-    const body = openDrawer(v ? 'Editar veículo — ' + v.placa : 'Novo veículo');
+    const body = openDrawer('Dados de manutenção — ' + v.placa);
     const val = (k) => escapeHtml(v && v[k] != null ? String(v[k]) : '');
-    const tipoOpts = tiposVeiculo().map((t) => `<option value="${t.key}"${(v ? v.tipo : 'cavalo') === t.key ? ' selected' : ''}>${escapeHtml(t.label)}</option>`).join('');
-    const sitOpts = situacoesVeiculo().map((s) => `<option value="${s.key}"${(v ? v.situacao : 'ativo') === s.key ? ' selected' : ''}>${escapeHtml(s.label)}</option>`).join('');
     body.innerHTML = `
-      <div class="field-row">
-        <div class="field"><label for="vc-placa">Placa *</label><input id="vc-placa" maxlength="8" value="${val('placa')}" placeholder="ABC1D23" style="text-transform:uppercase" autocomplete="off"></div>
-        <div class="field"><label for="vc-frota">Nº da frota</label><input id="vc-frota" maxlength="20" value="${val('frota')}" placeholder="Ex.: 012"></div>
+      <div class="vf-tms-info">
+        <span class="placa">${escapeHtml(v.placa)}</span>
+        <span>${escapeHtml(rotuloDe(tiposVeiculo(), v.tipo))}${v.propriedade ? ' · ' + escapeHtml(rotuloDe(propriedadesVeiculo(), v.propriedade)) : ''}</span>
+        ${statusVeiculoPill(v)}
+        <div class="hint">Placa, tipo, status e documentos vêm do TMS. Para mudar, altere no TMS: a lista daqui se atualiza sozinha.</div>
       </div>
-      <div class="field"><label for="vc-tipo">Tipo</label><select id="vc-tipo">${tipoOpts}</select></div>
+      <div class="field-row">
+        <div class="field"><label for="vc-frota">Nº da frota</label><input id="vc-frota" maxlength="20" value="${val('frota')}" placeholder="Ex.: 012"></div>
+        <div class="field"><label for="vc-ano">Ano</label><input id="vc-ano" inputmode="numeric" maxlength="4" value="${val('ano')}" placeholder="Ex.: 2021"></div>
+      </div>
       <div class="field-row">
         <div class="field"><label for="vc-marca">Marca</label><input id="vc-marca" maxlength="40" value="${val('marca')}" placeholder="Ex.: Volvo"></div>
         <div class="field"><label for="vc-modelo">Modelo</label><input id="vc-modelo" maxlength="60" value="${val('modelo')}" placeholder="Ex.: FH 540"></div>
       </div>
-      <div class="field-row">
-        <div class="field"><label for="vc-ano">Ano</label><input id="vc-ano" inputmode="numeric" maxlength="4" value="${val('ano')}" placeholder="Ex.: 2021"></div>
-        <div class="field"><label for="vc-km">Km atual</label><input id="vc-km" inputmode="numeric" value="${val('km_atual')}" placeholder="Ex.: 158432"></div>
-      </div>
-      <div class="field"><label for="vc-sit">Situação</label><select id="vc-sit">${sitOpts}</select></div>
-      <div class="field"><label for="vc-obs">Observações</label><textarea id="vc-obs" maxlength="400" placeholder="Contrato, motorista fixo, implemento engatado…">${val('obs')}</textarea></div>
-      <div class="hint">O km atual sobe sozinho quando uma manutenção é registrada com km maior.</div>
+      <div class="field"><label for="vc-km">Km atual</label><input id="vc-km" inputmode="numeric" value="${val('km_atual')}" placeholder="Ex.: 158432">
+        <div class="hint">Sobe sozinho quando uma manutenção é registrada com km maior.</div></div>
+      <div class="field"><label for="vc-obs">Observações</label><textarea id="vc-obs" maxlength="400" placeholder="Motorista fixo, implemento engatado, garantia…">${val('obs')}</textarea></div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="vc-cancelar">Cancelar</button>
-        <button class="btn btn-primary" id="vc-salvar">${v ? 'Salvar' : 'Cadastrar veículo'}</button>
+        <button class="btn btn-primary" id="vc-salvar">Salvar</button>
       </div>`;
-    setTimeout(() => { const c = $('vc-placa'); if (c) c.focus(); }, 50);
+    setTimeout(() => { const c = $('vc-frota'); if (c) c.focus(); }, 50);
     $('vc-cancelar').onclick = closeDrawer;
     $('vc-salvar').onclick = async () => {
       const dados = {
-        placa: $('vc-placa').value.trim(), frota: $('vc-frota').value.trim() || null, tipo: $('vc-tipo').value,
+        frota: $('vc-frota').value.trim() || null, ano: $('vc-ano').value.trim() || null,
         marca: $('vc-marca').value.trim() || null, modelo: $('vc-modelo').value.trim() || null,
-        ano: $('vc-ano').value.trim() || null, km_atual: $('vc-km').value.trim() || null,
-        situacao: $('vc-sit').value, obs: $('vc-obs').value.trim() || null,
+        km_atual: $('vc-km').value.trim() || null, obs: $('vc-obs').value.trim() || null,
       };
-      if (!dados.placa) { toast('Informe a placa.', 'err'); return; }
       const btn = $('vc-salvar');
       btn.disabled = true;
       try {
-        if (v) { await api('/api/veiculos/' + v.id, { method: 'PUT', body: dados }); toast('Veículo atualizado.'); }
-        else { await api('/api/veiculos', { method: 'POST', body: dados }); toast('Veículo cadastrado.'); }
+        await api('/api/veiculos/' + v.id, { method: 'PUT', body: dados });
+        toast('Dados do veículo salvos.');
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
@@ -2959,7 +2983,7 @@
   // ---- Ficha do veículo -----------------------------------------------------
   async function renderVeiculoFicha(id) {
     setTopbar(`<a class="btn btn-ghost" href="#/frota/veiculos">← Veículos</a>
-      <button class="btn btn-ghost" id="vf-editar" data-req="veiculos:editar">✎ Editar veículo</button>
+      <button class="btn btn-ghost" id="vf-editar" data-req="veiculos:editar">✎ Completar dados</button>
       <button class="btn btn-primary" id="vf-manut" data-req="manutencoes:criar">+ Registrar manutenção</button>`);
     view().innerHTML = '<div class="empty">Carregando…</div>';
     let v;
@@ -2991,13 +3015,20 @@
     const ini = new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1);
     const serie = porMes(hist, mesesEntre(`${ini.getFullYear()}-${p2m(ini.getMonth() + 1)}`, mesFim));
     const servicos = agruparServicos(hist).slice(0, 8);
+    const dadosTms = [
+      ['Tipo', rotuloDe(tiposVeiculo(), v.tipo) + (v.categoria === 'reboque' ? ' (reboque)' : '')],
+      ['Propriedade', v.propriedade ? rotuloDe(propriedadesVeiculo(), v.propriedade) : ''],
+      ['Proprietário', v.proprietario], ['RENAVAM', v.renavam], ['Chassi', v.chassi], ['ANTT', v.antt],
+      ['Capacidade', v.capacidade_kg != null ? Number(v.capacidade_kg).toLocaleString('pt-BR') + ' kg' : ''],
+      ['Observações do TMS', v.obs_tms], ['Sincronizado em', v.sincronizado_em ? fmtDateTime(v.sincronizado_em) : ''],
+    ].filter(([, x]) => x);
     view().innerHTML = `
       <div class="panel panel-pad vf-cab">
         <div class="vf-id"><span class="placa placa-g">${escapeHtml(v.placa)}</span>
           <div><div class="vf-nome">${escapeHtml(descVeiculo(v))}</div>
-            <div class="cell-sub">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', rotuloDe(tiposVeiculo(), v.tipo)].filter(Boolean).join(' · '))}</div></div></div>
+            <div class="cell-sub">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', rotuloDe(tiposVeiculo(), v.tipo), v.propriedade ? rotuloDe(propriedadesVeiculo(), v.propriedade) : ''].filter(Boolean).join(' · '))}</div></div></div>
         <div class="vf-km"><span class="vf-rot">Km atual</span><strong>${escapeHtml(fmtKmTxt(v.km_atual))}</strong></div>
-        ${situacaoPill(v.situacao)}
+        ${statusVeiculoPill(v)}
       </div>
       ${v.obs ? `<div class="hint vf-obs">${escapeHtml(v.obs)}</div>` : ''}
       ${verManut ? `
@@ -3023,6 +3054,8 @@
       </div>
       <div class="section-title">Linha do tempo</div>
       <div class="panel panel-pad" id="vf-linha">${linhaDoTempoVertical(hist)}</div>` : ''}
+      <div class="section-title">Dados do TMS <span class="muted">· para alterar, use o TMS</span></div>
+      <div class="panel panel-pad"><dl class="kv vf-kv">${dadosTms.map(([k, x]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(x))}</dd>`).join('')}</dl></div>
       ${pecas ? `<div class="section-title">Peças aplicadas neste veículo <span class="muted">· saídas do estoque da Frota com esta placa</span></div>
       <div class="panel">${!pecas.length ? '<div class="empty">Nenhuma saída de estoque registrada para esta placa.</div>' : `<div class="table-wrap"><table>
         <thead><tr><th>Quando</th><th>Item</th><th class="num">Quantidade</th><th>Motivo</th><th>Operador</th></tr></thead>
@@ -3067,10 +3100,11 @@
       <button class="btn btn-ghost" id="mn-importar" data-req="manutencoes:criar">⬆ Importar planilha</button>
       <button class="btn btn-primary" id="mn-novo" data-req="manutencoes:criar">+ Registrar manutenção</button>`);
     view().innerHTML = '<div class="empty">Carregando…</div>';
-    const [todas, veiculos] = await Promise.all([api('/api/manutencoes'), api('/api/veiculos')]);
+    const [todas, veiculos] = await Promise.all([api('/api/manutencoes'), api('/api/veiculos?todos=1')]);
     $('mn-novo').onclick = () => manutencaoForm(null, { veiculos });
-    $('mn-importar').onclick = () => importarPlanilha('manutencoes');
-    const vOpts = '<option value="">Todos os veículos</option>' + veiculos.map((v) => `<option value="${v.id}">${escapeHtml(v.placa + (v.frota ? ' · Frota ' + v.frota : '') + (v.modelo ? ' · ' + v.modelo : ''))}</option>`).join('');
+    $('mn-importar').onclick = () => importarPlanilha();
+    const vOpts = '<option value="">Todos os veículos</option>' + veiculos.slice().sort((a, b) => (foraDaLista(a) - foraDaLista(b)) || String(a.placa).localeCompare(String(b.placa)))
+      .map((v) => `<option value="${v.id}">${escapeHtml(rotuloVeiculoCurto(v))}</option>`).join('');
     view().innerHTML = `
       <div class="toolbar">
         <label class="pa-periodo-rot" for="mn-periodo">Período</label>
@@ -3172,7 +3206,7 @@
         + statCardSub('Preventivas', prev, pct(prev))
         + statCardSub('Corretivas', corr, pct(corr))
         + statCardSub('Custo no período', fmtCurrency(custo), comCusto ? `média de ${fmtCurrency(Math.round(custo / comCusto))} por manutenção` : 'sem custo informado')
-        + statCardSub('Veículos atendidos', nVeic, `de ${veiculos.length} cadastrado${veiculos.length === 1 ? '' : 's'}`);
+        + statCardSub('Veículos atendidos', nVeic, `de ${veiculos.filter((v) => !foraDaLista(v)).length} no TMS`);
 
       let meses = mesesEntre(per.mesIni, per.mesFim);
       let nota = '';
@@ -3251,17 +3285,17 @@
     opts = opts || {};
     let veiculos = opts.veiculos;
     if (!veiculos) {
-      try { veiculos = await api('/api/veiculos'); }
+      try { veiculos = await api('/api/veiculos?todos=1'); }
       catch (e) { toast(e.message, 'err'); return; }
     }
     const body = openDrawer(m ? 'Corrigir manutenção' : 'Registrar manutenção');
     if (!veiculos.length) {
-      body.innerHTML = '<div class="empty"><strong>Nenhum veículo cadastrado</strong>Cadastre os veículos em <a href="#/frota/veiculos">Frota ▸ Veículos</a>, um a um ou por planilha, e depois registre as manutenções.</div>';
+      body.innerHTML = '<div class="empty"><strong>Nenhum veículo recebido do TMS ainda</strong>Os veículos e reboques vêm do TMS. Veja a situação da conexão em <a href="#/frota/veiculos">Frota ▸ Veículos</a>.</div>';
       return;
     }
     const selId = m ? m.veiculo_id : (opts.veiculoId || '');
-    const ordem = veiculos.slice().sort((a, b) => ((a.situacao === 'inativo') - (b.situacao === 'inativo')) || String(a.placa).localeCompare(String(b.placa)));
-    const vOpts = (selId ? '' : '<option value="">Escolha o veículo…</option>') + ordem.map((v) => `<option value="${v.id}"${String(v.id) === String(selId) ? ' selected' : ''}>${escapeHtml(v.placa + (v.frota ? ' · Frota ' + v.frota : '') + (v.modelo ? ' · ' + v.modelo : '') + (v.situacao === 'inativo' ? ' (inativo)' : ''))}</option>`).join('');
+    const ordem = veiculos.slice().sort((a, b) => (foraDaLista(a) - foraDaLista(b)) || String(a.placa).localeCompare(String(b.placa)));
+    const vOpts = (selId ? '' : '<option value="">Escolha o veículo…</option>') + ordem.map((v) => `<option value="${v.id}"${String(v.id) === String(selId) ? ' selected' : ''}>${escapeHtml(rotuloVeiculoCurto(v))}</option>`).join('');
     const hoje = dataHojeIso();
     let tipo = m ? m.tipo : 'preventiva';
     const val = (k) => escapeHtml(m && m[k] != null ? String(m[k]) : '');
@@ -3323,31 +3357,20 @@
     };
   }
 
-  // ---- Importação por planilha (Excel .xlsx ou CSV) --------------------------
-  const COLUNAS_IMPORT = {
-    veiculos: [
-      { campo: 'placa', rotulo: 'Placa', nomes: ['placa', 'placadoveiculo', 'placaveiculo'] },
-      { campo: 'frota', rotulo: 'Nº da frota', nomes: ['ndafrota', 'nfrota', 'numerodafrota', 'numfrota', 'frota', 'prefixo', 'codigo', 'numero'] },
-      { campo: 'tipo', rotulo: 'Tipo', nomes: ['tipo', 'tipodeveiculo', 'tipoveiculo', 'categoria'] },
-      { campo: 'marca', rotulo: 'Marca', nomes: ['marca', 'fabricante', 'montadora'] },
-      { campo: 'modelo', rotulo: 'Modelo', nomes: ['modelo', 'veiculo', 'descricao'] },
-      { campo: 'ano', rotulo: 'Ano', nomes: ['ano', 'anofabricacao', 'anodefabricacao', 'anomodelo', 'anofab'] },
-      { campo: 'km_atual', rotulo: 'Km atual', nomes: ['kmatual', 'km', 'quilometragem', 'hodometro', 'odometro'] },
-      { campo: 'situacao', rotulo: 'Situação', nomes: ['situacao', 'status'] },
-      { campo: 'obs', rotulo: 'Observações', nomes: ['observacoes', 'observacao', 'obs'] },
-    ],
-    manutencoes: [
-      { campo: 'data', rotulo: 'Data', nomes: ['data', 'datadamanutencao', 'datadoservico', 'dataservico', 'dia'] },
-      { campo: 'placa', rotulo: 'Placa', nomes: ['placa', 'placadoveiculo', 'veiculo'] },
-      { campo: 'frota', rotulo: 'Nº da frota', nomes: ['ndafrota', 'nfrota', 'numerodafrota', 'frota', 'prefixo'] },
-      { campo: 'servico', rotulo: 'Serviço', nomes: ['servico', 'servicorealizado', 'descricaodoservico', 'descricao', 'manutencao'] },
-      { campo: 'tipo', rotulo: 'Tipo', nomes: ['tipo', 'tipodemanutencao', 'tipomanutencao'] },
-      { campo: 'km', rotulo: 'Km', nomes: ['km', 'quilometragem', 'hodometro', 'kmdoveiculo', 'odometro'] },
-      { campo: 'custo', rotulo: 'Custo', nomes: ['custors', 'custo', 'custototal', 'valorrs', 'valor', 'valortotal', 'preco'] },
-      { campo: 'oficina', rotulo: 'Oficina', nomes: ['oficina', 'fornecedor', 'prestador', 'responsavel', 'mecanico', 'local'] },
-      { campo: 'obs', rotulo: 'Observações', nomes: ['observacoes', 'observacao', 'obs'] },
-    ],
-  };
+  // ---- Importação do histórico de manutenções (Excel .xlsx ou CSV) -----------
+  // Os veículos vêm do TMS; a planilha só traz manutenções, achando o veículo
+  // pela placa ou pelo nº da frota já completado aqui.
+  const COLUNAS_MANUT = [
+    { campo: 'data', rotulo: 'Data', nomes: ['data', 'datadamanutencao', 'datadoservico', 'dataservico', 'dia'] },
+    { campo: 'placa', rotulo: 'Placa', nomes: ['placa', 'placadoveiculo', 'veiculo'] },
+    { campo: 'frota', rotulo: 'Nº da frota', nomes: ['ndafrota', 'nfrota', 'numerodafrota', 'frota', 'prefixo'] },
+    { campo: 'servico', rotulo: 'Serviço', nomes: ['servico', 'servicorealizado', 'descricaodoservico', 'descricao', 'manutencao'] },
+    { campo: 'tipo', rotulo: 'Tipo', nomes: ['tipo', 'tipodemanutencao', 'tipomanutencao'] },
+    { campo: 'km', rotulo: 'Km', nomes: ['km', 'quilometragem', 'hodometro', 'kmdoveiculo', 'odometro'] },
+    { campo: 'custo', rotulo: 'Custo', nomes: ['custors', 'custo', 'custototal', 'valorrs', 'valor', 'valortotal', 'preco'] },
+    { campo: 'oficina', rotulo: 'Oficina', nomes: ['oficina', 'fornecedor', 'prestador', 'responsavel', 'mecanico', 'local'] },
+    { campo: 'obs', rotulo: 'Observações', nomes: ['observacoes', 'observacao', 'obs'] },
+  ];
   function lerCsv(texto) {
     const primeira = texto.split(/\r?\n/, 1)[0] || '';
     const sep = [';', '\t', ','].map((c) => [c, primeira.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
@@ -3401,27 +3424,11 @@
     if (typeof v === 'number') return Math.round(v * 100);
     return parseMoneyToCents(String(v));
   }
-  function tipoVeiculoDeTexto(v) {
-    const t = semAcento(v);
-    if (!t) return '';
-    if (tiposVeiculo().some((x) => x.key === t)) return t;
-    const tabela = [['cavalo', 'cavalo'], ['carreta', 'carreta'], ['semirreboque', 'carreta'], ['reboque', 'carreta'], ['bitrem', 'carreta'],
-      ['rodotrem', 'carreta'], ['truck', 'truck'], ['toco', 'toco'], ['van', 'van'], ['utilitario', 'van'], ['carro', 'carro'], ['apoio', 'carro']];
-    const hit = tabela.find(([k]) => t.includes(k));
-    return hit ? hit[1] : 'outro';
-  }
-  function situacaoDeTexto(v) {
-    const t = semAcento(v);
-    if (!t) return '';
-    if (t.includes('manut')) return 'manutencao';
-    if (t.includes('inativ') || t.includes('baixad') || t.includes('vendid')) return 'inativo';
-    return 'ativo';
-  }
   const tipoManutDeTexto = (v) => (semAcento(v).startsWith('c') ? 'corretiva' : 'preventiva');
-  function mapearPlanilha(tipo, brutas) {
-    const defs = COLUNAS_IMPORT[tipo];
+  function mapearPlanilha(brutas) {
+    const defs = COLUNAS_MANUT;
     const iCab = brutas.findIndex((l) => Array.isArray(l) && l.filter((c) => String(c).trim() !== '').length >= 2);
-    if (iCab < 0) return { erro: 'Não achei a linha com os nomes das colunas. A primeira linha da planilha precisa ter os títulos (Placa, Modelo…).' };
+    if (iCab < 0) return { erro: 'Não achei a linha com os nomes das colunas. A primeira linha da planilha precisa ter os títulos (Data, Placa, Serviço…).' };
     const cab = brutas[iCab].map(semAcento);
     const usado = {};
     const mapa = {};
@@ -3434,8 +3441,8 @@
     };
     defs.forEach((d) => { acha(d, (c, nome) => c === nome); });
     defs.forEach((d) => { if (!(d.campo in mapa)) acha(d, (c, nome) => c.startsWith(nome)); });
-    const faltam = (tipo === 'veiculos' ? ['placa'] : ['data', 'servico']).filter((c) => !(c in mapa));
-    if (tipo === 'manutencoes' && !('placa' in mapa) && !('frota' in mapa)) faltam.push('placa');
+    const faltam = ['data', 'servico'].filter((c) => !(c in mapa));
+    if (!('placa' in mapa) && !('frota' in mapa)) faltam.push('placa');
     if (faltam.length) {
       const nomes = faltam.map((c) => (defs.find((d) => d.campo === c) || { rotulo: c }).rotulo);
       return { erro: `A planilha precisa ter a coluna ${nomes.join(' e ')}.` };
@@ -3449,42 +3456,26 @@
       if (!Array.isArray(row) || row.every((c) => String(c).trim() === '')) continue;
       const o = {};
       Object.keys(mapa).forEach((campo) => { o[campo] = row[mapa[campo]]; });
-      if (tipo === 'veiculos') {
-        linhas.push({ linha: r + 1, placa: s(o.placa), frota: s(o.frota) || null, tipo: tipoVeiculoDeTexto(o.tipo),
-          marca: s(o.marca) || null, modelo: s(o.modelo) || null, ano: s(o.ano) || null, km_atual: s(o.km_atual) || null,
-          situacao: situacaoDeTexto(o.situacao), obs: s(o.obs) || null });
-      } else {
-        linhas.push({ linha: r + 1, placa: s(o.placa) || null, frota: s(o.frota) || null, data: dataDaPlanilha(o.data),
-          servico: s(o.servico), tipo: tipoManutDeTexto(o.tipo), tipo_informado: !!s(o.tipo), km: s(o.km) || null,
-          custo_cents: custoDaPlanilha(o.custo), oficina: s(o.oficina) || null, obs: s(o.obs) || null });
-      }
+      linhas.push({ linha: r + 1, placa: s(o.placa) || null, frota: s(o.frota) || null, data: dataDaPlanilha(o.data),
+        servico: s(o.servico), tipo: tipoManutDeTexto(o.tipo), tipo_informado: !!s(o.tipo), km: s(o.km) || null,
+        custo_cents: custoDaPlanilha(o.custo), oficina: s(o.oficina) || null, obs: s(o.obs) || null });
     }
     return { linhas, reconhecidas, ignoradas };
   }
-  function baixarModeloPlanilha(tipo) {
+  function baixarModeloPlanilha() {
     if (typeof XLSX === 'undefined') { toast('Biblioteca de planilha indisponível.', 'err'); return; }
     const wb = XLSX.utils.book_new();
     const add = (nome, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), nome);
-    if (tipo === 'veiculos') {
-      add('Veículos', [['Placa', 'Nº da frota', 'Tipo', 'Marca', 'Modelo', 'Ano', 'Km atual', 'Situação', 'Observações'],
-        ['ABC1D23', '012', 'Cavalo mecânico', 'Volvo', 'FH 540', 2021, 158432, 'Ativo', ''],
-        ['DEF2G34', '013', 'Carreta / semirreboque', 'Randon', 'Graneleira', 2019, '', 'Ativo', 'Engatada no 012']]);
-      add('Valores aceitos', [['Tipo'], ...tiposVeiculo().map((t) => [t.label]), [''], ['Situação'], ...situacoesVeiculo().map((x) => [x.label])]);
-    } else {
-      add('Manutenções', [['Data', 'Placa', 'Serviço', 'Tipo', 'Km', 'Custo (R$)', 'Oficina', 'Observações'],
-        ['16/05/2026', 'ABC1D23', 'Revisão 40 mil km', 'Preventiva', 158432, 2450, 'Concessionária Volvo', ''],
-        ['18/03/2026', 'ABC1D23', 'Pastilhas de freio', 'Corretiva', 149875, 610.5, 'Oficina do Zé', 'Eixo dianteiro']]);
-      add('Serviços sugeridos', [['Serviço'], ...(state.catalog.servicosManutencao || []).map((x) => [x])]);
-    }
-    XLSX.writeFile(wb, tipo === 'veiculos' ? 'modelo-veiculos.xlsx' : 'modelo-manutencoes.xlsx');
+    add('Manutenções', [['Data', 'Placa', 'Serviço', 'Tipo', 'Km', 'Custo (R$)', 'Oficina', 'Observações'],
+      ['16/05/2026', 'ABC1D23', 'Revisão 40 mil km', 'Preventiva', 158432, 2450, 'Concessionária Volvo', ''],
+      ['18/03/2026', 'ABC1D23', 'Pastilhas de freio', 'Corretiva', 149875, 610.5, 'Oficina do Zé', 'Eixo dianteiro']]);
+    add('Serviços sugeridos', [['Serviço'], ...(state.catalog.servicosManutencao || []).map((x) => [x])]);
+    XLSX.writeFile(wb, 'modelo-manutencoes.xlsx');
   }
-  function importarPlanilha(tipo) {
-    const ehVeic = tipo === 'veiculos';
-    const body = openDrawer(ehVeic ? 'Importar veículos de uma planilha' : 'Importar histórico de manutenções', { largo: true });
+  function importarPlanilha() {
+    const body = openDrawer('Importar histórico de manutenções', { largo: true });
     body.innerHTML = `
-      <p class="cfg-text">${ehVeic
-        ? 'Traga todos os veículos de uma vez com uma planilha do Excel (.xlsx) ou CSV. A primeira linha precisa ter os nomes das colunas. <strong>Placa</strong> é obrigatória; as outras são opcionais: Nº da frota, Tipo, Marca, Modelo, Ano, Km atual, Situação e Observações.'
-        : 'Traga o histórico que já existe com uma planilha do Excel (.xlsx) ou CSV. A primeira linha precisa ter os nomes das colunas. Obrigatórias: <strong>Data</strong>, <strong>Serviço</strong> e <strong>Placa</strong> (ou <strong>Nº da frota</strong>) de um veículo já cadastrado. Opcionais: Tipo (preventiva ou corretiva), Km, Custo, Oficina e Observações.'}</p>
+      <p class="cfg-text">Traga o histórico que já existe com uma planilha do Excel (.xlsx) ou CSV. A primeira linha precisa ter os nomes das colunas. Obrigatórias: <strong>Data</strong>, <strong>Serviço</strong> e <strong>Placa</strong> (ou <strong>Nº da frota</strong>) de um veículo que já veio do TMS. Opcionais: Tipo (preventiva ou corretiva), Km, Custo, Oficina e Observações.</p>
       <div class="acc-tools">
         <button type="button" class="btn btn-ghost btn-sm" id="imp-modelo">⬇ Baixar modelo de planilha</button>
         <span>Linhas repetidas são ignoradas: dá para importar de novo sem duplicar.</span>
@@ -3495,7 +3486,6 @@
         <span class="muted" id="imp-nome">Nenhum arquivo escolhido</span>
       </div>
       <div id="imp-previa"></div>
-      ${ehVeic ? '<label class="chk imp-atual" data-req="veiculos:editar"><input type="checkbox" id="imp-atualizar"> Completar os dados dos veículos que já estão cadastrados (célula vazia não apaga nada)</label>' : ''}
       <div id="imp-resultado"></div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="imp-fechar">Fechar</button>
@@ -3503,7 +3493,7 @@
       </div>`;
     let linhas = [];
     let nomeArquivo = '';
-    $('imp-modelo').onclick = () => baixarModeloPlanilha(tipo);
+    $('imp-modelo').onclick = baixarModeloPlanilha;
     $('imp-fechar').onclick = closeDrawer;
     $('imp-escolher').onclick = () => $('imp-arq').click();
     $('imp-arq').onchange = async () => {
@@ -3516,22 +3506,17 @@
       $('imp-enviar').disabled = true;
       linhas = [];
       let r;
-      try { r = mapearPlanilha(tipo, await lerPlanilha(f)); }
+      try { r = mapearPlanilha(await lerPlanilha(f)); }
       catch (e) { $('imp-previa').innerHTML = `<div class="login-err">${escapeHtml(e.message)}</div>`; return; }
       if (r.erro) { $('imp-previa').innerHTML = `<div class="login-err">${escapeHtml(r.erro)}</div>`; return; }
       linhas = r.linhas;
       if (!linhas.length) { $('imp-previa').innerHTML = '<div class="login-err">A planilha não tem linhas depois dos títulos.</div>'; return; }
       const amostra = linhas.slice(0, 8);
-      const cabeca = ehVeic
-        ? '<th>Linha</th><th>Placa</th><th>Nº frota</th><th>Tipo</th><th>Marca / modelo</th><th>Ano</th><th class="num">Km</th>'
-        : '<th>Linha</th><th>Data</th><th>Veículo</th><th>Serviço</th><th>Tipo</th><th class="num">Km</th><th class="num">Custo</th>';
-      const corpo = amostra.map((l) => (ehVeic
-        ? `<tr><td class="muted">${l.linha}</td><td>${escapeHtml(l.placa || '—')}</td><td>${escapeHtml(l.frota || '—')}</td><td>${escapeHtml(l.tipo ? rotuloDe(tiposVeiculo(), l.tipo) : '—')}</td><td>${escapeHtml([l.marca, l.modelo].filter(Boolean).join(' ') || '—')}</td><td>${escapeHtml(l.ano || '—')}</td><td class="num">${escapeHtml(l.km_atual || '—')}</td></tr>`
-        : `<tr><td class="muted">${l.linha}</td><td>${escapeHtml(/^\d{4}-\d{2}-\d{2}$/.test(l.data) ? fmtDate(l.data) : (l.data || '—'))}</td><td>${escapeHtml(l.placa || (l.frota ? 'Frota ' + l.frota : '—'))}</td><td>${escapeHtml(l.servico || '—')}</td><td>${tipoManutHtml(l.tipo)}${l.tipo_informado ? '' : ' <span class="muted">(padrão)</span>'}</td><td class="num">${escapeHtml(l.km || '—')}</td><td class="num">${l.custo_cents == null ? '—' : fmtCurrency(l.custo_cents)}</td></tr>`)).join('');
       $('imp-previa').innerHTML = `
         <div class="imp-resumo"><strong>${linhas.length} linha${linhas.length === 1 ? '' : 's'}</strong> para importar.
           <span class="muted">Colunas usadas: ${escapeHtml(r.reconhecidas.join(', '))}${r.ignoradas.length ? ' · não usadas: ' + escapeHtml(r.ignoradas.join(', ')) : ''}</span></div>
-        <div class="table-wrap"><table><thead><tr>${cabeca}</tr></thead><tbody>${corpo}</tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Data</th><th>Veículo</th><th>Serviço</th><th>Tipo</th><th class="num">Km</th><th class="num">Custo</th></tr></thead>
+        <tbody>${amostra.map((l) => `<tr><td class="muted">${l.linha}</td><td>${escapeHtml(/^\d{4}-\d{2}-\d{2}$/.test(l.data) ? fmtDate(l.data) : (l.data || '—'))}</td><td>${escapeHtml(l.placa || (l.frota ? 'Frota ' + l.frota : '—'))}</td><td>${escapeHtml(l.servico || '—')}</td><td>${tipoManutHtml(l.tipo)}${l.tipo_informado ? '' : ' <span class="muted">(padrão)</span>'}</td><td class="num">${escapeHtml(l.km || '—')}</td><td class="num">${l.custo_cents == null ? '—' : fmtCurrency(l.custo_cents)}</td></tr>`).join('')}</tbody></table></div>
         ${linhas.length > amostra.length ? `<div class="hint">Mostrando as primeiras ${amostra.length} de ${linhas.length} linhas.</div>` : ''}`;
       $('imp-enviar').disabled = false;
       $('imp-enviar').textContent = `Importar ${linhas.length} linha${linhas.length === 1 ? '' : 's'}`;
@@ -3542,20 +3527,18 @@
       btn.disabled = true;
       try {
         const corpo = { arquivo: nomeArquivo, linhas: linhas.map((l) => { const c = Object.assign({}, l); delete c.tipo_informado; return c; }) };
-        if (ehVeic && $('imp-atualizar') && $('imp-atualizar').checked) corpo.atualizar = true;
-        const res = await api(ehVeic ? '/api/veiculos/importar' : '/api/manutencoes/importar', { method: 'POST', body: corpo });
+        const res = await api('/api/manutencoes/importar', { method: 'POST', body: corpo });
         const problemas = (res.erros || []).map((x) => ({ linha: x.linha, motivo: x.motivo, cls: 'bad' }))
           .concat((res.ignorados || []).map((x) => ({ linha: x.linha, motivo: x.motivo, cls: 'na' })))
           .sort((a, b) => a.linha - b.linha);
         $('imp-resultado').innerHTML = `
           <div class="imp-res">
-            <span class="s5-chip ok">${res.criados} ${ehVeic ? 'cadastrado' : 'registrada'}${res.criados === 1 ? '' : 's'}</span>
-            ${ehVeic ? `<span class="s5-chip ok2">${res.atualizados || 0} atualizado${res.atualizados === 1 ? '' : 's'}</span>` : ''}
+            <span class="s5-chip ok">${res.criados} registrada${res.criados === 1 ? '' : 's'}</span>
             <span class="s5-chip na">${(res.ignorados || []).length} ignorada${(res.ignorados || []).length === 1 ? '' : 's'}</span>
             <span class="s5-chip ${(res.erros || []).length ? 'bad' : 'na'}">${(res.erros || []).length} com erro</span>
           </div>
           ${problemas.length ? `<div class="table-wrap"><table><thead><tr><th>Linha</th><th>O que aconteceu</th></tr></thead><tbody>${problemas.slice(0, 200).map((p) => `<tr><td class="muted">${p.linha}</td><td><span class="s5-chip ${p.cls}">${p.cls === 'bad' ? 'Erro' : 'Ignorada'}</span> ${escapeHtml(p.motivo)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
-        toast(`Importação concluída: ${res.criados} ${ehVeic ? 'veículo(s) cadastrado(s)' : 'manutenção(ões) registrada(s)'}.`);
+        toast(`Importação concluída: ${res.criados} manutenção(ões) registrada(s).`);
         linhas = [];
         btn.textContent = 'Importar';
         rerender();
@@ -4724,7 +4707,7 @@
     remover_dono: 'Removeu dono', leitura: 'Leitura QR', status: 'Alterou status',
     inventario: 'Inventário', login: 'Entrou', logout: 'Saiu', config: 'Configurações',
     ho_saida: 'Saída p/ Home Office', ho_volta: 'Devolução Home Office',
-    entrada: 'Entrada de estoque', saida: 'Saída de estoque', importar: 'Importou planilha',
+    entrada: 'Entrada de estoque', saida: 'Saída de estoque', importar: 'Importou planilha', sincronizar: 'Sincronizou com o TMS',
     seed: 'Sistema',
   };
   const ENTITY_LABELS = { asset: 'Item', peripheral: 'Sub-item', person: 'Pessoa', room: 'Sala', homeoffice: 'Home Office', assignment: 'Vínculo', user: 'Operador', material: 'Material', frota: 'Item de frota', veiculo: 'Veículo', manutencao: 'Manutenção', sistema: 'Sistema' };
@@ -4905,9 +4888,10 @@
       (dump.materiais || []).forEach((m) => matRows.push([m.nome || '', m.quantidade == null ? '' : m.quantidade, m.minimo == null ? '' : m.minimo, m.updated_at || m.created_at || '']));
       add('Materiais', matRows);
       add('Frota', frotaRowsXlsx(dump.frota_itens));
-      const veicRows = [['Placa', 'Nº da frota', 'Tipo', 'Marca', 'Modelo', 'Ano', 'Km atual', 'Situação', 'Observações']];
-      (dump.veiculos || []).forEach((v) => veicRows.push([v.placa, v.frota || '', rotuloDe(tiposVeiculo(), v.tipo), v.marca || '', v.modelo || '',
-        v.ano || '', v.km_atual == null ? '' : v.km_atual, rotuloDe(situacoesVeiculo(), v.situacao), v.obs || '']));
+      const veicRows = [['Placa', 'Categoria', 'Tipo', 'Status no TMS', 'Arquivado no TMS', 'Fora do TMS', 'Propriedade', 'Nº da frota', 'Marca', 'Modelo', 'Ano', 'Km atual', 'RENAVAM', 'Chassi', 'Observações']];
+      (dump.veiculos || []).forEach((v) => veicRows.push([v.placa, v.categoria === 'reboque' ? 'Reboque' : 'Veículo', rotuloDe(tiposVeiculo(), v.tipo),
+        rotuloDe(situacoesVeiculo(), v.status), v.arquivado ? 'Sim' : 'Não', v.fora_do_tms ? 'Sim' : 'Não', v.propriedade ? rotuloDe(propriedadesVeiculo(), v.propriedade) : '',
+        v.frota || '', v.marca || '', v.modelo || '', v.ano || '', v.km_atual == null ? '' : v.km_atual, v.renavam || '', v.chassi || '', v.obs || '']));
       add('Veículos', veicRows);
       const manRows = [['Data', 'Placa', 'Serviço', 'Tipo', 'Km', 'Custo (R$)', 'Oficina', 'Observações', 'Registrado por', 'Registrado em']];
       (dump.manutencoes || []).forEach((m) => manRows.push([m.data, m.placa, m.servico, m.tipo === 'corretiva' ? 'Corretiva' : 'Preventiva',
