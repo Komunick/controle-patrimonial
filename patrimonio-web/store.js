@@ -95,6 +95,52 @@
       { key: 'kg', label: 'Quilo' },
       { key: 'm', label: 'Metro' },
     ],
+    // Acessos por operador (Operadores ▸ Acessos por aba). Cada aba lista os
+    // níveis que fazem sentido nela, em ordem crescente; "padrao" é o que vale
+    // para operadores cadastrados antes desta versão (o comportamento antigo).
+    // "Cadastrar e movimentar" é também o teto da opção "Bloquear alteração de
+    // itens existentes": o operador cria e dá entrada/saída, mas não altera.
+    niveisAcesso: [
+      { key: 'nenhum', label: 'Sem acesso' },
+      { key: 'ver', label: 'Visualizar' },
+      { key: 'criar', label: 'Cadastrar e movimentar' },
+      { key: 'editar', label: 'Editar' },
+      { key: 'excluir', label: 'Excluir' },
+    ],
+    abas: [
+      { key: 'painel', label: 'Painel', grupo: 'Geral', niveis: ['nenhum', 'ver'], padrao: 'ver',
+        ajuda: { ver: 'Ver os números gerais do patrimônio' } },
+      { key: 'pesquisa', label: 'Pesquisa', grupo: 'Geral', niveis: ['nenhum', 'ver'], padrao: 'ver',
+        ajuda: { ver: 'Pesquisar itens e sub-itens' } },
+      { key: 'equipamentos', label: 'Itens', grupo: 'Cadastros', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'excluir',
+        ajuda: { ver: 'Consultar itens e fichas', criar: 'Cadastrar itens e sub-itens novos', editar: 'Alterar dados, donos e local de itens existentes', excluir: 'Excluir itens e sub-itens' } },
+      { key: 'pessoas', label: 'Pessoas', grupo: 'Cadastros', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'excluir',
+        ajuda: { ver: 'Consultar pessoas', criar: 'Cadastrar pessoas novas', editar: 'Alterar cadastros existentes', excluir: 'Excluir pessoas' } },
+      { key: 'salas', label: 'Locais', grupo: 'Cadastros', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'excluir',
+        ajuda: { ver: 'Consultar locais', criar: 'Cadastrar locais novos', editar: 'Alterar locais existentes', excluir: 'Excluir locais' } },
+      { key: 'homeoffice', label: 'Home Office', grupo: 'Operação', niveis: ['nenhum', 'ver', 'criar', 'excluir'], padrao: 'excluir',
+        ajuda: { ver: 'Consultar saídas e devoluções', criar: 'Registrar saídas e devoluções', excluir: 'Excluir registros' } },
+      { key: 'epis', label: 'EPIs', grupo: 'Operação', niveis: ['nenhum', 'ver', 'criar', 'excluir'], padrao: 'criar',
+        ajuda: { ver: 'Consultar entregas e termos', criar: 'Registrar entregas e anexar termos assinados', excluir: 'Cancelar entregas' } },
+      { key: 'materiais', label: 'Materiais', grupo: 'Estoque', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'editar',
+        ajuda: { ver: 'Consultar o estoque', criar: 'Cadastrar materiais e dar entrada e saída', editar: 'Alterar nome e estoque mínimo', excluir: 'Excluir materiais' } },
+      { key: 'materiais_painel', label: 'Materiais · Painel administrativo', grupo: 'Estoque', niveis: ['nenhum', 'ver'], padrao: 'nenhum',
+        ajuda: { ver: 'Ver reposição, movimentações e exportar' } },
+      { key: 'frota', label: 'Frota', grupo: 'Estoque', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'editar',
+        ajuda: { ver: 'Consultar os itens da frota', criar: 'Cadastrar itens e dar entrada e saída', editar: 'Alterar dados dos itens', excluir: 'Excluir itens de frota' } },
+      { key: 'frota_painel', label: 'Frota · Painel administrativo', grupo: 'Estoque', niveis: ['nenhum', 'ver'], padrao: 'nenhum',
+        ajuda: { ver: 'Ver reposição, consumo por veículo e movimentações' } },
+      { key: 'inventario', label: 'Inventário', grupo: 'Controle', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'excluir',
+        ajuda: { ver: 'Acompanhar o inventário', criar: 'Conferir itens', editar: 'Desfazer conferências', excluir: 'Reiniciar o inventário' } },
+      { key: 'inspecao', label: 'Inspeção 5S', grupo: 'Controle', niveis: ['nenhum', 'ver', 'criar', 'excluir'], padrao: 'criar',
+        ajuda: { ver: 'Consultar inspeções e relatórios', criar: 'Iniciar e preencher as próprias inspeções', excluir: 'Controle total: continuar e excluir inspeções de qualquer pessoa' } },
+      { key: 'etiquetas', label: 'Etiquetas', grupo: 'Controle', niveis: ['nenhum', 'ver'], padrao: 'ver',
+        ajuda: { ver: 'Imprimir etiquetas' } },
+      { key: 'auditoria', label: 'Auditoria', grupo: 'Controle', niveis: ['nenhum', 'ver'], padrao: 'ver',
+        ajuda: { ver: 'Consultar o histórico de ações' } },
+      { key: 'config', label: 'Configurações', grupo: 'Sistema', niveis: ['nenhum', 'ver', 'editar'], padrao: 'ver',
+        ajuda: { ver: 'Ver as configurações e baixar o backup', editar: 'Alterar empresa e prefixo e restaurar backup' } },
+    ],
     peripheralTypes: [
       // Entrada
       { key: 'teclado', label: 'Teclado' },
@@ -354,7 +400,93 @@
     return [{ id: 1, login: 'admin', name: 'Administrador', pass_hash: hashPassword('admin123'), role: 'admin', active: true, created_at: nowLocal() }];
   }
   function defaultSettings() { return { company: COMPANY, tag_prefix: TAG_PREFIX }; }
-  const userPublic = (u) => ({ id: u.id, login: u.login, name: u.name, role: u.role, active: u.active !== false, created_at: u.created_at });
+  // ===========================================================================
+  // Acessos por aba (Operadores ▸ Acessos por aba)
+  // ---------------------------------------------------------------------------
+  // Níveis em ordem crescente. Cada ação que altera dados tem uma classe:
+  // "criar" (cadastrar algo novo ou dar entrada/saída), "editar" (alterar o que
+  // já existe) ou "excluir". Administradores têm tudo. A opção "Bloquear
+  // alteração de itens existentes" limita o operador a "criar" em todas as abas.
+  // ===========================================================================
+  const NIVEIS_ACESSO = ['nenhum', 'ver', 'criar', 'editar', 'excluir'];
+  const nivelIdx = (n) => { const i = NIVEIS_ACESSO.indexOf(n); return i < 0 ? 0 : i; };
+  const abaPorKey = (k) => CATALOG.abas.find((a) => a.key === k) || null;
+  // Maior nível que a aba oferece sem passar de "n" (ex.: "editar" numa aba só
+  // de consulta vira "ver").
+  function nivelNaAba(aba, n) {
+    let melhor = aba.niveis[0];
+    for (const k of aba.niveis) if (nivelIdx(k) <= nivelIdx(n)) melhor = k;
+    return melhor;
+  }
+  // O que o administrador configurou (sem aplicar o bloqueio). Aba sem valor
+  // salvo usa o padrão do catálogo — é o que mantém operadores antigos iguais.
+  function permsConfiguradas(u) {
+    const salvo = u && u.perms && typeof u.perms === 'object' ? u.perms : {};
+    const out = {};
+    for (const a of CATALOG.abas) {
+      const n = NIVEIS_ACESSO.indexOf(salvo[a.key]) >= 0 ? salvo[a.key] : a.padrao;
+      out[a.key] = nivelNaAba(a, n);
+    }
+    return out;
+  }
+  // O que vale de fato: administrador tem tudo; o bloqueio corta tudo acima de "criar".
+  function acessoEfetivo(u) {
+    const conf = permsConfiguradas(u);
+    const out = {};
+    for (const a of CATALOG.abas) {
+      if (u && u.role === 'admin') { out[a.key] = a.niveis[a.niveis.length - 1]; continue; }
+      let n = conf[a.key];
+      if (u && u.bloquear_alteracao && nivelIdx(n) > nivelIdx('criar')) n = nivelNaAba(a, 'criar');
+      out[a.key] = n;
+    }
+    return out;
+  }
+  // Só guarda chaves e níveis válidos para cada aba.
+  function normalizarPerms(entrada) {
+    const out = {};
+    if (!entrada || typeof entrada !== 'object') return out;
+    for (const a of CATALOG.abas) {
+      const n = entrada[a.key];
+      if (typeof n === 'string' && a.niveis.indexOf(n) >= 0) out[a.key] = n;
+    }
+    return out;
+  }
+  const rotuloNivel = (n) => { const x = CATALOG.niveisAcesso.find((v) => v.key === n); return x ? x.label : n; };
+  function diffPerms(antes, depois) {
+    const mud = [];
+    for (const a of CATALOG.abas) {
+      if (antes[a.key] !== depois[a.key]) mud.push(`${a.label}: ${rotuloNivel(antes[a.key])} → ${rotuloNivel(depois[a.key])}`);
+    }
+    return mud.join(', ');
+  }
+  // O app manda o NOME do operador no cabeçalho X-Operator (é o que aparece na
+  // auditoria); nomes são únicos entre operadores, então o nome identifica.
+  function operadorDoAtor(actor) {
+    const a = String(actor || '');
+    if (!a) return null;
+    return DB.users.find((u) => u.active !== false && u.name === a)
+      || DB.users.find((u) => u.active !== false && u.login === a) || null;
+  }
+  function podeAtor(actor, aba, nivel) {
+    const u = operadorDoAtor(actor);
+    if (!u) return false;
+    if (u.role === 'admin') return true;
+    return nivelIdx(acessoEfetivo(u)[aba]) >= nivelIdx(nivel);
+  }
+  const VERBO_NIVEL = { ver: 'ver', criar: 'cadastrar ou dar entrada e saída', editar: 'alterar registros', excluir: 'excluir registros' };
+  function semPermissao(actor, aba, nivel) {
+    const u = operadorDoAtor(actor);
+    if (!u) return 'Operador não identificado. Saia e entre novamente no sistema.';
+    const a = abaPorKey(aba) || { label: aba };
+    if (u.bloquear_alteracao && nivelIdx(nivel) > nivelIdx('criar') && nivelIdx(permsConfiguradas(u)[aba]) >= nivelIdx(nivel)) {
+      return 'Seu usuário está com o bloqueio de alteração: pode cadastrar e dar entrada ou saída, mas não alterar nem excluir o que já existe. Fale com um administrador.';
+    }
+    return `Seu usuário não tem permissão para ${VERBO_NIVEL[nivel] || 'fazer isso'} em “${a.label}”. Peça a um administrador para liberar em Operadores.`;
+  }
+  const userPublic = (u) => ({
+    id: u.id, login: u.login, name: u.name, role: u.role, active: u.active !== false, created_at: u.created_at,
+    perms: permsConfiguradas(u), bloquear_alteracao: !!u.bloquear_alteracao, acesso: acessoEfetivo(u),
+  });
 
   function emptyDB() {
     return {
@@ -487,12 +619,52 @@
   const peripheralById = (id) => DB.peripherals.find((p) => String(p.id) === String(id)) || null;
   const assignmentById = (id) => DB.assignments.find((g) => String(g.id) === String(id)) || null;
 
-  function audit(actor, action, entity_type, entity_id, entity_label, details) {
-    DB.audit_log.push({
+  // "meta" (opcional) guarda dados estruturados do registro — quantidade,
+  // unidade, estoque, placa e motivo de uma entrada/saída — para os painéis
+  // não dependerem do texto dos detalhes.
+  function audit(actor, action, entity_type, entity_id, entity_label, details, meta) {
+    const row = {
       id: nextId('audit_log'), ts: nowLocal(), actor: actor || 'sistema', action, entity_type,
       entity_id: entity_id == null ? null : entity_id, entity_label: entity_label == null ? null : entity_label,
       details: details == null ? null : (typeof details === 'string' ? details : JSON.stringify(details)),
-    });
+    };
+    if (meta && typeof meta === 'object') row.meta = meta;
+    DB.audit_log.push(row);
+  }
+
+  // Movimentação de estoque (materiais e frota) montada a partir da auditoria.
+  // Registros novos trazem "meta"; os antigos são lidos do texto dos detalhes.
+  function movimentoDe(r) {
+    const mv = {
+      id: r.id, ts: r.ts, actor: r.actor, action: r.action, item_id: r.entity_id, item: r.entity_label,
+      qtd: null, unidade: null, estoque: null, placa: null, motivo: null, inicial: false,
+      detalhes: r.details == null ? null : String(r.details),
+    };
+    const m = r.meta && typeof r.meta === 'object' ? r.meta : null;
+    if (m) {
+      for (const k of ['qtd', 'unidade', 'estoque', 'placa', 'motivo']) if (m[k] != null) mv[k] = m[k];
+      mv.inicial = !!m.inicial;
+      return mv;
+    }
+    const d = mv.detalhes || '';
+    let x;
+    if ((r.action === 'entrada' || r.action === 'saida')
+      && (x = /^(?:Entrada|Saída|Estorno) de (\d+) ([^\s(—]+?)\.?(?: \(estoque: (\d+)\))?(?: — ([\s\S]*))?$/.exec(d))) {
+      const q = parseInt(x[1], 10);
+      mv.qtd = r.action === 'saida' ? -q : q;
+      mv.unidade = x[2];
+      if (x[3] != null) mv.estoque = parseInt(x[3], 10);
+      let resto = x[4] || '';
+      const v = /^veículo (\S+)(?: — ([\s\S]*))?$/.exec(resto);
+      if (v) { mv.placa = v[1]; resto = v[2] || ''; }
+      if (/^Estorno/.test(d)) resto = 'Estorno' + (resto ? ' — ' + resto : '');
+      mv.motivo = resto || null;
+    } else if (r.action === 'criar' && (x = /— (\d+) ([^\s.]+)\.? em estoque$/.exec(d))) {
+      mv.qtd = parseInt(x[1], 10); mv.unidade = x[2]; mv.estoque = mv.qtd; mv.inicial = true;
+    } else if (r.action === 'excluir' && (x = /\(estoque: (\d+)(?: ([^\s)]+))?\)/.exec(d))) {
+      mv.estoque = parseInt(x[1], 10); mv.unidade = x[2] || 'un';
+    }
+    return mv;
   }
 
   function nextTag(prefix) {
@@ -725,9 +897,60 @@
   const fail = (status, error) => ({ ok: false, status, data: { error } });
   const has = (o, k) => Object.prototype.hasOwnProperty.call(o || {}, k);
 
+  // Classe exigida por cada ação que altera dados (GET nunca é barrado aqui:
+  // as telas escondem as abas sem acesso). null = rota livre.
+  const ROTA_ABA = {
+    assets: 'equipamentos', peripherals: 'equipamentos', people: 'pessoas', rooms: 'salas',
+    homeoffice: 'homeoffice', epi: 'epis', materiais: 'materiais', frota: 'frota',
+    inventory: 'inventario', inspections: 'inspecao', config: 'config',
+  };
+  function acaoExigida(method, seg) {
+    if (method === 'GET' || method === 'HEAD') return null;
+    const r1 = seg[1], s2 = seg[2], s3 = seg[3];
+    if (r1 === 'users') return { admin: true };
+    const aba = ROTA_ABA[r1];
+    if (!aba) return null;
+    if (r1 === 'epi' && s2 === 'assinar') return null; // pública: link de assinatura do colaborador
+    let nivel;
+    if (r1 === 'assets') {
+      if (!s2 || s3 === 'peripherals') nivel = 'criar';          // item novo / sub-item novo
+      else if (s3 === 'owners') nivel = 'editar';                 // donos de um item existente
+      else nivel = method === 'DELETE' ? 'excluir' : 'editar';
+    } else if (r1 === 'homeoffice') {
+      nivel = method === 'DELETE' ? 'excluir' : 'criar';         // saída e devolução são movimentos
+    } else if (r1 === 'epi') {
+      nivel = s3 === 'cancelar' ? 'excluir' : 'criar';           // entrega e termo assinado
+    } else if (r1 === 'materiais' || r1 === 'frota') {
+      if (!s2 || s3 === 'ajuste') nivel = 'criar';               // cadastro, entrada e saída
+      else nivel = method === 'DELETE' ? 'excluir' : 'editar';
+    } else if (r1 === 'inventory') {
+      if (s2 === 'reset') nivel = 'excluir';
+      else if (s2 === 'check' && method === 'DELETE') nivel = 'editar';
+      else nivel = 'criar';                                        // conferir
+    } else if (r1 === 'inspections') {
+      nivel = 'criar'; // a rota confere se é o dono do rascunho ou se tem controle total
+    } else if (r1 === 'config') {
+      nivel = 'editar';
+    } else {
+      nivel = !s2 ? 'criar' : (method === 'DELETE' ? 'excluir' : 'editar');
+    }
+    return { aba, nivel };
+  }
+
   function route(method, seg, query, body, actor) {
     // seg[0] === 'api'
     const r1 = seg[1];
+
+    // --- acessos por aba: toda ação que altera dados passa por aqui ---
+    const exig = acaoExigida(method, seg);
+    if (exig) {
+      if (exig.admin) {
+        const op = operadorDoAtor(actor);
+        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem gerenciar operadores.');
+      } else if (!podeAtor(actor, exig.aba, exig.nivel)) {
+        return fail(403, semPermissao(actor, exig.aba, exig.nivel));
+      }
+    }
 
     // --- config / next-tag ---
     if (r1 === 'config' && method === 'GET') {
@@ -883,15 +1106,15 @@
       if (!cur) return fail(404, 'Inspeção não encontrada');
       const status = cur.status || 'concluida'; // dados antigos não têm status
       // Rascunho só pode ser alterado por quem o iniciou (ou por um admin).
-      const opInsp = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
-      const adminInsp = !!(opInsp && opInsp.role === 'admin');
+      // "Controle total" da Inspeção 5S = nível Excluir (administradores sempre têm).
+      const adminInsp = podeAtor(actor, 'inspecao', 'excluir');
       const donoOuAdmin = adminInsp || cur.inspector === actor;
       if (method === 'GET' && !seg[3]) return ok(inspView(cur));
 
       // Salvar respostas do rascunho (autosave do formulário paginado).
       if (method === 'PUT' && !seg[3]) {
         if (status !== 'em_andamento') return fail(400, 'Esta inspeção já foi concluída.');
-        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou um administrador) pode editá-la.');
+        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou quem tem controle total da Inspeção 5S) pode editá-la.');
         // Trava otimista: se outra sessão salvou depois do snapshot deste
         // cliente, rejeita para ninguém apagar as respostas do outro.
         if (body && body.base_updated_at != null && String(body.base_updated_at) !== String(cur.updated_at)) {
@@ -925,7 +1148,7 @@
       // Concluir: valida obrigatórios, calcula pontuação e congela o resultado.
       if (seg[3] === 'concluir' && method === 'POST') {
         if (status !== 'em_andamento') return fail(400, 'Esta inspeção já foi concluída.');
-        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou um administrador) pode concluí-la.');
+        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou quem tem controle total da Inspeção 5S) pode concluí-la.');
         const tpl = tplPorKey(cur.template_key);
         if (!tpl) return fail(400, 'Modelo de inspeção não encontrado.');
         const defs = tplPerguntas(tpl);
@@ -1008,7 +1231,7 @@
       // Metadados das fotos de evidência (o arquivo em si fica no servidor).
       if (seg[3] === 'fotos') {
         if (status !== 'em_andamento') return fail(400, 'Fotos só podem ser alteradas com a inspeção em andamento.');
-        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou um administrador) pode alterar as fotos.');
+        if (!donoOuAdmin) return fail(403, 'Somente quem iniciou a inspeção (ou quem tem controle total da Inspeção 5S) pode alterar as fotos.');
         const tpl = tplPorKey(cur.template_key);
         const defs = tpl ? tplPerguntas(tpl) : {};
         const qid = String((body && body.question_id) || '');
@@ -1049,8 +1272,8 @@
         const donoDoRascunho = status === 'em_andamento' && cur.inspector === actor;
         if (!admin && !donoDoRascunho) {
           return fail(403, status === 'em_andamento'
-            ? 'Somente administradores ou quem iniciou a inspeção podem descartá-la.'
-            : 'Somente administradores podem excluir inspeções concluídas.');
+            ? 'Somente quem iniciou a inspeção (ou quem tem controle total da Inspeção 5S) pode descartá-la.'
+            : 'Somente quem tem controle total da Inspeção 5S pode excluir inspeções concluídas.');
         }
         // Devolve os arquivos de foto para o servidor apagar do disco.
         const fotosArquivos = [];
@@ -1093,7 +1316,8 @@
           const nid = nextId('materiais');
           const row = { id: nid, nome, quantidade, minimo, created_at: nowLocal(), updated_at: nowLocal() };
           DB.materiais.push(row);
-          audit(actor, 'criar', 'material', nid, nome, `Material cadastrado — ${quantidade} un. em estoque`);
+          audit(actor, 'criar', 'material', nid, nome, `Material cadastrado — ${quantidade} un. em estoque`,
+            { qtd: quantidade, unidade: 'un', estoque: quantidade, inicial: true });
           persist();
           return ok(row, 201);
         }
@@ -1129,15 +1353,15 @@
         cur.updated_at = nowLocal();
         const motivo = body.motivo ? ' — ' + String(body.motivo).slice(0, 200) : '';
         audit(actor, delta > 0 ? 'entrada' : 'saida', 'material', cur.id, cur.nome,
-          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} un. (estoque: ${novo})${motivo}`);
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} un. (estoque: ${novo})${motivo}`,
+          { qtd: delta, unidade: 'un', estoque: novo, motivo: body.motivo ? String(body.motivo).slice(0, 200) : null });
         persist();
         return ok(cur);
       }
       if (method === 'DELETE') {
-        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
-        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem excluir materiais.');
         DB.materiais = DB.materiais.filter((m) => m !== cur);
-        audit(actor, 'excluir', 'material', cur.id, cur.nome, `Material excluído (estoque: ${cur.quantidade})`);
+        audit(actor, 'excluir', 'material', cur.id, cur.nome, `Material excluído (estoque: ${cur.quantidade})`,
+          { estoque: cur.quantidade, unidade: 'un' });
         persist();
         return ok({ ok: true });
       }
@@ -1177,7 +1401,8 @@
             created_at: nowLocal(), updated_at: nowLocal(),
           };
           DB.frota_itens.push(row);
-          audit(actor, 'criar', 'frota', nid, nome, `Item de frota cadastrado (${catLabel(categoria)}) — ${quantidade} ${unidade} em estoque`);
+          audit(actor, 'criar', 'frota', nid, nome, `Item de frota cadastrado (${catLabel(categoria)}) — ${quantidade} ${unidade} em estoque`,
+            { qtd: quantidade, unidade, estoque: quantidade, inicial: true });
           persist();
           return ok(row, 201);
         }
@@ -1216,15 +1441,15 @@
         const motivo = texto(body.motivo, 200);
         const extras = [placa ? 'veículo ' + placa.toUpperCase() : '', motivo].filter(Boolean).join(' — ');
         audit(actor, delta > 0 ? 'entrada' : 'saida', 'frota', cur.id, cur.nome,
-          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} ${cur.unidade} (estoque: ${novo})${extras ? ' — ' + extras : ''}`);
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} ${cur.unidade} (estoque: ${novo})${extras ? ' — ' + extras : ''}`,
+          { qtd: delta, unidade: cur.unidade, estoque: novo, placa: placa ? placa.toUpperCase() : null, motivo });
         persist();
         return ok(cur);
       }
       if (method === 'DELETE') {
-        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
-        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem excluir itens de frota.');
         DB.frota_itens = DB.frota_itens.filter((f) => f !== cur);
-        audit(actor, 'excluir', 'frota', cur.id, cur.nome, `Item de frota excluído (estoque: ${cur.quantidade} ${cur.unidade})`);
+        audit(actor, 'excluir', 'frota', cur.id, cur.nome, `Item de frota excluído (estoque: ${cur.quantidade} ${cur.unidade})`,
+          { estoque: cur.quantidade, unidade: cur.unidade });
         persist();
         return ok({ ok: true });
       }
@@ -1357,8 +1582,10 @@
           audit(actor, 'criar', 'epi', nid, personName,
             'Entrega de EPI (' + itens.length + ' item(ns)) — aguardando assinatura');
           for (const b of baixas) {
+            const mm = DB.materiais.find((m) => m.id === b.material_id);
             audit(actor, 'saida', 'material', b.material_id, b.nome,
-              `Saída de ${b.qtd} un. — entrega de EPI para ${personName}`);
+              `Saída de ${b.qtd} un. — entrega de EPI para ${personName}`,
+              { qtd: -b.qtd, unidade: 'un', estoque: mm ? mm.quantidade : null, motivo: 'Entrega de EPI para ' + personName });
           }
           persist();
           return ok(Object.assign({}, row, { estoque_avisos: avisos }), 201);
@@ -1389,8 +1616,6 @@
         return ok(cur);
       }
       if (seg[3] === 'cancelar' && method === 'POST') {
-        const op = DB.users.find((u) => (u.name === actor || u.login === actor) && u.active !== false);
-        if (!op || op.role !== 'admin') return fail(403, 'Somente administradores podem cancelar entregas.');
         if (cur.status === 'assinado') return fail(400, 'Termo já assinado não pode ser cancelado.');
         if (cur.status === 'cancelado') return fail(400, 'Esta entrega já foi cancelada.');
         cur.status = 'cancelado';
@@ -1401,7 +1626,8 @@
           mat.quantidade += b.qtd;
           mat.updated_at = nowLocal();
           audit(actor, 'entrada', 'material', mat.id, mat.nome,
-            `Estorno de ${b.qtd} un. — entrega de EPI para ${cur.person_name} cancelada`);
+            `Estorno de ${b.qtd} un. — entrega de EPI para ${cur.person_name} cancelada`,
+            { qtd: b.qtd, unidade: 'un', estoque: mat.quantidade, motivo: 'Estorno — entrega de EPI para ' + cur.person_name + ' cancelada' });
         }
         audit(actor, 'cancelar', 'epi', cur.id, cur.person_name, 'Entrega de EPI cancelada');
         persist();
@@ -1429,11 +1655,18 @@
           if (!name) return fail(400, 'Informe o nome do operador.');
           if (!b.password || String(b.password).length < 4) return fail(400, 'A senha deve ter ao menos 4 caracteres.');
           if (DB.users.some((u) => String(u.login).toLowerCase() === login)) return fail(409, 'Já existe um operador com esse login.');
+          if (DB.users.some((u) => String(u.name).trim().toLowerCase() === name.toLowerCase())) {
+            return fail(409, 'Já existe um operador com esse nome. Use um nome diferente (por exemplo, com o sobrenome).');
+          }
           const role = b.role === 'admin' ? 'admin' : 'operador';
           const nid = nextId('users');
-          const row = { id: nid, login, name, pass_hash: hashPassword(String(b.password)), role, active: b.active !== false, created_at: nowLocal() };
+          const row = {
+            id: nid, login, name, pass_hash: hashPassword(String(b.password)), role, active: b.active !== false, created_at: nowLocal(),
+            perms: Object.assign(permsConfiguradas(null), normalizarPerms(b.perms)),
+            bloquear_alteracao: b.bloquear_alteracao === true,
+          };
           DB.users.push(row);
-          audit(actor, 'criar', 'user', nid, name, `Operador (${role})`);
+          audit(actor, 'criar', 'user', nid, name, `Operador (${role})${row.bloquear_alteracao && role !== 'admin' ? ' — com bloqueio de alteração' : ''}`);
           persist();
           return ok(userPublic(row), 201);
         }
@@ -1444,13 +1677,25 @@
       const activeAdmins = () => DB.users.filter((u) => u.role === 'admin' && u.active !== false);
       if (method === 'PUT') {
         const b = body;
+        const antes = {
+          login: cur.login, name: cur.name, role: cur.role, active: cur.active !== false,
+          perms: permsConfiguradas(cur), bloq: !!cur.bloquear_alteracao,
+        };
         if (has(b, 'login')) {
           const login = String(b.login || '').trim().toLowerCase();
           if (!/^[a-z0-9._-]{2,40}$/.test(login)) return fail(400, 'Login inválido.');
           if (DB.users.some((u) => String(u.login).toLowerCase() === login && u.id !== cur.id)) return fail(409, 'Já existe um operador com esse login.');
           cur.login = login;
         }
-        if (has(b, 'name') && String(b.name).trim()) cur.name = String(b.name).trim();
+        if (has(b, 'name') && String(b.name).trim()) {
+          const nome = String(b.name).trim();
+          if (DB.users.some((u) => u.id !== cur.id && String(u.name).trim().toLowerCase() === nome.toLowerCase())) {
+            return fail(409, 'Já existe um operador com esse nome. Use um nome diferente (por exemplo, com o sobrenome).');
+          }
+          cur.name = nome;
+        }
+        if (has(b, 'perms')) cur.perms = Object.assign(permsConfiguradas(cur), normalizarPerms(b.perms));
+        if (has(b, 'bloquear_alteracao')) cur.bloquear_alteracao = b.bloquear_alteracao === true;
         if (has(b, 'role')) {
           const role = b.role === 'admin' ? 'admin' : 'operador';
           if (cur.role === 'admin' && role !== 'admin' && activeAdmins().length <= 1) return fail(400, 'É necessário ao menos um administrador ativo.');
@@ -1465,7 +1710,16 @@
           if (String(b.password).length < 4) return fail(400, 'A senha deve ter ao menos 4 caracteres.');
           cur.pass_hash = hashPassword(String(b.password));
         }
-        audit(actor, 'editar', 'user', cur.id, cur.name, 'Operador atualizado');
+        const mud = [];
+        if (antes.login !== cur.login) mud.push(`login ${antes.login} → ${cur.login}`);
+        if (antes.name !== cur.name) mud.push(`nome ${antes.name} → ${cur.name}`);
+        if (antes.role !== cur.role) mud.push(cur.role === 'admin' ? 'virou administrador' : 'virou operador');
+        if (antes.active !== (cur.active !== false)) mud.push(cur.active !== false ? 'reativado' : 'desativado');
+        if (b.password) mud.push('senha alterada');
+        if (antes.bloq !== !!cur.bloquear_alteracao) mud.push(cur.bloquear_alteracao ? 'bloqueio de alteração ligado' : 'bloqueio de alteração desligado');
+        const dp = diffPerms(antes.perms, permsConfiguradas(cur));
+        if (dp) mud.push('acessos: ' + dp);
+        audit(actor, 'editar', 'user', cur.id, cur.name, mud.length ? 'Operador atualizado — ' + mud.join('; ') : 'Operador atualizado');
         persist();
         return ok(userPublic(cur));
       }
@@ -1940,6 +2194,16 @@
       return ok(result);
     }
 
+    // --- movimentações de estoque (painéis administrativos de Materiais e Frota) ---
+    if (r1 === 'movimentos' && method === 'GET') {
+      const tipo = query.tipo === 'frota' ? 'frota' : 'material';
+      const ACOES = ['criar', 'editar', 'excluir', 'entrada', 'saida'];
+      const limite = Math.min(10000, Math.max(1, parseInt(query.limit, 10) || 5000));
+      const rows = DB.audit_log.filter((r) => r.entity_type === tipo && ACOES.indexOf(r.action) >= 0)
+        .sort((a, b) => b.id - a.id);
+      return ok({ total: rows.length, rows: rows.slice(0, limite).map(movimentoDe) });
+    }
+
     // --- auditoria ---
     if (r1 === 'audit' && method === 'GET') {
       const limit = Math.min(500, Math.max(1, parseInt(query.limit, 10) || 100));
@@ -2114,6 +2378,7 @@
 
   global.Patrimonio = {
     request,
+    pode: podeAtor, // usado pelo servidor nas rotas que não passam pelo store (backup)
     qrDataUrl,
     dump,
     restore,
