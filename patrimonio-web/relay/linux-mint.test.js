@@ -60,7 +60,7 @@ test('servidor local oferece healthcheck e encerra por SIGTERM', {
       HOST: '127.0.0.1',
       PORT: String(porta),
       PAT_DATA_DIR: temporario,
-      PAT_LINK_ASSINATURA: 'https://relay.example.test',
+      PAT_LINK_ASSINATURA: 'http://100.116.101.53:8080',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -83,6 +83,12 @@ test('servidor local oferece healthcheck e encerra por SIGTERM', {
     processo,
     () => `${saida}\n${erroSaida}`,
   );
+  const linkBase = await fetch(`http://127.0.0.1:${porta}/api/epi/link-base`);
+  assert.equal(linkBase.status, 200);
+  assert.deepEqual(await linkBase.json(), {
+    base: 'https://controle-patrimonial-relay-epi.onrender.com',
+    origem: 'ambiente-invalido-relay-padrao',
+  });
   processo.kill('SIGTERM');
   const [codigo] = await once(processo, 'exit');
   assert.equal(codigo, 0, `${saida}\n${erroSaida}`);
@@ -95,6 +101,7 @@ test('artefatos Linux Mint usam systemd endurecido e preservam a VM', () => {
   const instalador = ler('instalar-linux-mint.sh');
   const verificador = ler('verificar-linux-mint.sh');
   const prompt = ler('DEPLOY-CLAUDE-COWORK-LINUX-MINT.md');
+  const app = fs.readFileSync(path.join(WEB_DIR, 'app.js'), 'utf8');
 
   for (const unidade of [principal, sync]) {
     assert.match(unidade, /User=@@USUARIO@@/);
@@ -109,6 +116,8 @@ test('artefatos Linux Mint usam systemd endurecido e preservam a VM', () => {
   assert.match(instalador, /id -u.*USUARIO_SERVICO/);
   assert.match(instalador, /porta_8080_ocupada/);
   assert.match(instalador, /--somente-configurar/);
+  assert.match(instalador, /--somente-sincronizador/);
+  assert.match(instalador, /sistema_local_compativel/);
   assert.match(instalador, /install -m 0600 -o root -g root/);
   assert.ok(
     instalador.indexOf('porta_8080_ocupada()') < instalador.indexOf('systemctl enable'),
@@ -117,6 +126,10 @@ test('artefatos Linux Mint usam systemd endurecido e preservam a VM', () => {
   assert.doesNotMatch(instalador, /^\s*(?:sudo\s+)?(?:reboot|shutdown|poweroff|halt|kill|pkill|killall)\b/m);
   assert.doesNotMatch(instalador, /^\s*systemctl\s+(?:stop|restart)\b/m);
   assert.doesNotMatch(verificador, /^\s*systemctl\s+(?:start|stop|restart|enable|disable)\b/m);
+  assert.match(app, /https:\/\/controle-patrimonial-relay-epi\.onrender\.com/);
+  assert.match(app, /url\.protocol !== 'https:'/);
+  assert.match(app, /ipLiteral/);
+  assert.doesNotMatch(app, /epiBasePublica \|\| location\.origin/);
   assert.match(prompt, /ESTRITAMENTE PROIBIDO/);
   assert.match(prompt, /A VM não foi desligada ou reiniciada/);
 });

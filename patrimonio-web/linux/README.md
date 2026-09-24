@@ -4,6 +4,14 @@ Este pacote executa o sistema local e o sincronizador do relay como serviços
 `systemd`. O relay público continua no Render; portanto, a VM não precisa de IP
 público e só faz conexões de saída HTTPS.
 
+O link enviado ao colaborador é sempre público:
+
+```text
+https://controle-patrimonial-relay-epi.onrender.com/assinar.html?t=<token>
+```
+
+Ele funciona em 4G/5G e em redes externas. A porta 8080 nunca aparece no link.
+
 ```text
 celular -> HTTPS -> relay no Render
                         ^  |
@@ -28,7 +36,7 @@ serviços.
 ## Requisitos
 
 - Linux Mint com `systemd`;
-- Node.js 24 LTS instalado para todo o sistema;
+- Node.js 24 LTS instalado para o usuário ou para todo o sistema;
 - relay já implantado no Render;
 - URL HTTPS do relay e o mesmo `RELAY_SEGREDO` usado no Render;
 - usuário Linux comum, sem privilégios, para executar o Node;
@@ -48,7 +56,8 @@ systemctl --version
 ```
 
 O instalador não instala nem atualiza Node.js, pacotes, Guest Additions,
-firewall ou componentes do sistema operacional.
+firewall ou componentes do sistema operacional. Ele aceita Node 24/22 em
+`~/.nvm/versions/node` e prefere a versão 24 mais recente do usuário.
 
 ## Recursos recomendados da VM
 
@@ -95,7 +104,8 @@ sudo bash ./linux/instalar-linux-mint.sh \
 ```
 
 O instalador pedirá `RELAY_SEGREDO` sem mostrar os caracteres. Use exatamente o
-mesmo segredo configurado no Render.
+mesmo segredo configurado no Render. Sem `--relay-url`, ele usa automaticamente
+`https://controle-patrimonial-relay-epi.onrender.com`.
 
 Ele realiza somente estas ações:
 
@@ -178,6 +188,24 @@ sudo ss -ltnp 'sport = :8080'
 Não use `kill`, `pkill`, `killall` ou reinicialização da VM. Se a porta pertence
 a uma instalação anterior do próprio Controle Patrimonial, planeje a migração
 e a ativação em uma janela segura.
+
+Se a porta pertence ao Controle Patrimonial que já está funcionando e a única
+peça ausente é a sincronização com o relay, use o modo de compatibilidade:
+
+```bash
+sudo bash ./linux/instalar-linux-mint.sh \
+  --usuario "$USER" \
+  --somente-sincronizador
+```
+
+Esse modo valida a API local, instala e inicia apenas
+`controle-patrimonial-relay-sync.service`. Ele não instala, para, reinicia ou
+habilita `controle-patrimonial.service` e não interfere no processo que já ocupa
+a porta 8080.
+
+Depois de até 60 segundos, o endpoint público `/healthz` deve mostrar pelo menos
+um termo quando houver entrega pendente. Um relay com `"termos":0` está online,
+mas ainda não recebeu dados da VM.
 
 ## Atualizações e ativação controlada
 

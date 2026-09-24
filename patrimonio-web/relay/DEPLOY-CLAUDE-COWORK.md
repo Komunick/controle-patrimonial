@@ -374,6 +374,11 @@ Se autorizado, use o termo sem dados pessoais desnecessários, aguarde 60s,
 confirme log/relay/link. Não reinicie sincronizador/processos em falha; investigue
 por logs/consultas.
 
+O link copiado deve obrigatoriamente começar com a URL HTTPS do relay. É falha
+de deploy se contiver `:8080`, `localhost`, um IP direto ou endereços privados/
+Tailscale como `100.64.0.0/10`. Não envie esse link ao colaborador: reporte a
+configuração inválida e prossiga somente com leituras, sem reiniciar servidor/VM.
+
 O usuário faz o teste físico no celular. Não afirme ter testado 4G/5G sem sua
 confirmação. Oriente verificar internet móvel, ausência de login, dados, EPIs,
 CAs, assinatura com dedo, limpar, validações, aceite e confirmação.

@@ -44,7 +44,7 @@ Ao final, e somente se todas as verificações forem seguras:
 4. os dados ficarão em `/var/lib/controle-patrimonial`;
 5. os segredos ficarão em `/etc/controle-patrimonial`, fora do Git;
 6. a página pública continuará sendo
-   `https://URL-DO-RELAY/assinar.html?t=<token>`;
+   `https://controle-patrimonial-relay-epi.onrender.com/assinar.html?t=<token>`;
 7. nenhum outro serviço ou processo será alterado;
 8. a VM não será desligada ou reiniciada.
 
@@ -129,6 +129,9 @@ checkout forçado, clean, stash, merge ou pull que possa sobrescrever trabalho.
 
 Se a porta 8080 estiver ocupada, registre o nome do processo e **PARE antes da
 ativação**. É estritamente proibido encerrar esse processo ou reiniciar a VM.
+Se o processo for confirmado pelo administrador como o Controle Patrimonial
+legado, a única ativação permitida posteriormente será o modo
+`--somente-sincronizador` descrito na Fase 4.
 
 ### CHECKPOINT 1
 
@@ -249,6 +252,19 @@ Para migração, acrescente:
 --somente-configurar
 ```
 
+Se o Controle Patrimonial correto já estiver funcionando na porta 8080 e faltar
+somente o envio ao relay, não instale nem substitua o serviço principal. Após a
+confirmação explícita do administrador, use:
+
+```bash
+sudo bash ./linux/instalar-linux-mint.sh \
+  --usuario "USUARIO_LINUX" \
+  --somente-sincronizador
+```
+
+Esse modo precisa validar `/api/epi/link-base` antes de iniciar apenas o sync.
+Se a validação falhar, pare. Não encerre o ocupante da porta e não reinicie a VM.
+
 Não inclua o segredo na linha de comando. O instalador solicitará o valor de
 forma oculta; devolva o teclado ao usuário para que ele digite pessoalmente.
 
@@ -298,6 +314,10 @@ Se estiverem ativos, confirme:
 - `PAT_LINK_ASSINATURA` aponta para a URL do relay;
 - o relay responde em `/healthz`.
 
+No relay público, `"termos":0` significa que o site está acessível, mas o
+sincronizador ainda não enviou nenhuma entrega. Não considere o deploy funcional
+até que um termo pendente apareça no relay e seu link abra fora da rede local.
+
 ## Fase 6 — teste funcional controlado
 
 Somente com autorização explícita do administrador, use um termo de teste:
@@ -305,6 +325,8 @@ Somente com autorização explícita do administrador, use um termo de teste:
 1. crie ou selecione um termo pendente no sistema;
 2. aguarde o ciclo de até 60 segundos;
 3. confirme que o link copiado usa o domínio HTTPS do relay;
+   rejeite qualquer link com `:8080`, `localhost`, IP direto ou faixa privada/
+   Tailscale como `100.64.0.0/10`; nunca o envie ao colaborador;
 4. abra o link em viewport de celular;
 5. confirme nome, itens, canvas, documento e aceite;
 6. assine apenas o termo de teste;
