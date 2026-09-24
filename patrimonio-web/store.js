@@ -95,6 +95,32 @@
       { key: 'kg', label: 'Quilo' },
       { key: 'm', label: 'Metro' },
     ],
+    // Frota ▸ Veículos e Manutenções: tipos de veículo, situação, tipo de
+    // manutenção e serviços sugeridos no registro (dá para digitar outro).
+    tiposVeiculo: [
+      { key: 'cavalo', label: 'Cavalo mecânico' },
+      { key: 'truck', label: 'Caminhão truck' },
+      { key: 'toco', label: 'Caminhão toco' },
+      { key: 'carreta', label: 'Carreta / semirreboque' },
+      { key: 'van', label: 'Van / utilitário' },
+      { key: 'carro', label: 'Carro de apoio' },
+      { key: 'outro', label: 'Outro' },
+    ],
+    situacoesVeiculo: [
+      { key: 'ativo', label: 'Ativo' },
+      { key: 'manutencao', label: 'Em manutenção' },
+      { key: 'inativo', label: 'Inativo' },
+    ],
+    tiposManutencao: [
+      { key: 'preventiva', label: 'Preventiva' },
+      { key: 'corretiva', label: 'Corretiva' },
+    ],
+    servicosManutencao: [
+      'Revisão programada', 'Troca de óleo e filtro', 'Troca de filtro de ar', 'Troca de filtro de combustível',
+      'Pastilhas / lonas de freio', 'Alinhamento e balanceamento', 'Troca de pneus', 'Rodízio de pneus',
+      'Suspensão', 'Embreagem', 'Câmbio / diferencial', 'Sistema elétrico', 'Bateria',
+      'Arrefecimento / radiador', 'Lubrificação / graxa', 'Tacógrafo', 'Ar-condicionado', 'Funilaria / carroceria',
+    ],
     // Acessos por operador (Operadores ▸ Acessos por aba). Cada aba lista os
     // níveis que fazem sentido nela, em ordem crescente; "padrao" é o que vale
     // para operadores cadastrados antes desta versão (o comportamento antigo).
@@ -130,6 +156,10 @@
         ajuda: { ver: 'Consultar os itens da frota', criar: 'Cadastrar itens e dar entrada e saída', editar: 'Alterar dados dos itens', excluir: 'Excluir itens de frota' } },
       { key: 'frota_painel', label: 'Frota · Painel administrativo', grupo: 'Estoque', niveis: ['nenhum', 'ver'], padrao: 'nenhum',
         ajuda: { ver: 'Ver reposição, consumo por veículo e movimentações' } },
+      { key: 'veiculos', label: 'Frota · Veículos', grupo: 'Frota', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'ver',
+        ajuda: { ver: 'Consultar os veículos e a ficha de cada um', criar: 'Cadastrar e importar veículos', editar: 'Alterar dados e km dos veículos', excluir: 'Excluir veículos sem histórico' } },
+      { key: 'manutencoes', label: 'Frota · Manutenções', grupo: 'Frota', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'ver',
+        ajuda: { ver: 'Consultar o histórico e os indicadores', criar: 'Registrar e importar manutenções', editar: 'Corrigir manutenções registradas', excluir: 'Excluir manutenções' } },
       { key: 'inventario', label: 'Inventário', grupo: 'Controle', niveis: ['nenhum', 'ver', 'criar', 'editar', 'excluir'], padrao: 'excluir',
         ajuda: { ver: 'Acompanhar o inventário', criar: 'Conferir itens', editar: 'Desfazer conferências', excluir: 'Reiniciar o inventário' } },
       { key: 'inspecao', label: 'Inspeção 5S', grupo: 'Controle', niveis: ['nenhum', 'ver', 'criar', 'excluir'], padrao: 'criar',
@@ -502,7 +532,7 @@
   function ensureShape() {
     const e = emptyDB();
     if (!DB || typeof DB !== 'object') { DB = e; return; }
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens', 'veiculos', 'manutencoes']) {
       if (!Array.isArray(DB[k])) DB[k] = [];
     }
     if (!DB.seq || typeof DB.seq !== 'object') DB.seq = e.seq;
@@ -522,7 +552,7 @@
     if (!('started_at' in DB.inventory)) DB.inventory.started_at = null;
     if (!('started_by' in DB.inventory)) DB.inventory.started_by = null;
     // recalcula contadores a partir do maior id existente (robustez)
-    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens']) {
+    for (const k of ['people', 'assets', 'peripherals', 'assignments', 'audit_log', 'users', 'rooms', 'homeoffice', 'inspections', 'epi_entregas', 'materiais', 'frota_itens', 'veiculos', 'manutencoes']) {
       const arr = Array.isArray(DB[k]) ? DB[k] : [];
       let max = 0;
       for (const row of arr) if (row && typeof row.id === 'number' && row.id > max) max = row.id;
@@ -631,6 +661,130 @@
     if (meta && typeof meta === 'object') row.meta = meta;
     DB.audit_log.push(row);
   }
+
+  // ===========================================================================
+  // Frota ▸ Veículos e Manutenções — validação comum ao cadastro e à importação
+  // ===========================================================================
+  const normPlaca = (v) => String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const PLACA_OK = /^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/; // ABC1234 ou Mercosul ABC1D23
+  const textoLimpo = (v, max) => { const s = v == null ? '' : String(v).trim().slice(0, max); return s || null; };
+  // "158.432", "158432 km" e 158432 viram 158432; vazio vira null.
+  function inteiroOuNull(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return isFinite(v) ? Math.round(v) : null;
+    const d = String(v).replace(/\D/g, '');
+    return d ? parseInt(d, 10) : null;
+  }
+  function dataValida(d) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+    const [y, m, dd] = d.split('-').map(Number);
+    const dt = new Date(y, m - 1, dd);
+    return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === dd;
+  }
+  function reais(c) {
+    if (c == null) return '';
+    return 'R$ ' + (c / 100).toFixed(2).replace('.', ',').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  }
+  const rotuloCatalogo = (lista, k) => { const x = lista.find((i) => i.key === k); return x ? x.label : k; };
+  const fmtKm = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' km';
+  const CAMPO_VEICULO = { placa: 'placa', frota: 'nº da frota', marca: 'marca', modelo: 'modelo', ano: 'ano', tipo: 'tipo', km_atual: 'km', situacao: 'situação', obs: 'observações' };
+  const CAMPO_MANUT = { veiculo_id: 'veículo', data: 'data', servico: 'serviço', tipo: 'tipo', km: 'km', custo_cents: 'custo', oficina: 'oficina', obs: 'observações' };
+  const veiculoPorId = (id) => DB.veiculos.find((v) => String(v.id) === String(id)) || null;
+
+  // Campos do veículo (parcial = só os enviados). Devolve { campos } ou { erro }.
+  function camposVeiculo(b, parcial) {
+    const out = {};
+    const anoMax = new Date().getFullYear() + 1;
+    if (!parcial || has(b, 'placa')) {
+      const p = normPlaca(b.placa);
+      if (!PLACA_OK.test(p)) return { erro: 'Placa inválida. Use o formato ABC1D23 (Mercosul) ou ABC1234.' };
+      out.placa = p;
+    }
+    if (!parcial || has(b, 'frota')) out.frota = textoLimpo(b.frota, 20);
+    if (!parcial || has(b, 'marca')) out.marca = textoLimpo(b.marca, 40);
+    if (!parcial || has(b, 'modelo')) out.modelo = textoLimpo(b.modelo, 60);
+    if (!parcial || has(b, 'ano')) {
+      const a = inteiroOuNull(b.ano);
+      if (a != null && (a < 1950 || a > anoMax)) return { erro: `Ano inválido: use um ano entre 1950 e ${anoMax}.` };
+      out.ano = a;
+    }
+    if (!parcial || has(b, 'tipo')) out.tipo = CATALOG.tiposVeiculo.some((t) => t.key === b.tipo) ? b.tipo : 'outro';
+    if (!parcial || has(b, 'km_atual')) {
+      const k = inteiroOuNull(b.km_atual);
+      if (k != null && k > 9999999) return { erro: 'Km inválido.' };
+      out.km_atual = k;
+    }
+    if (!parcial || has(b, 'situacao')) out.situacao = CATALOG.situacoesVeiculo.some((t) => t.key === b.situacao) ? b.situacao : 'ativo';
+    if (!parcial || has(b, 'obs')) out.obs = textoLimpo(b.obs, 400);
+    return { campos: out };
+  }
+
+  // Campos da manutenção (parcial = só os enviados). Devolve { campos } ou { erro }.
+  function camposManutencao(b, parcial) {
+    const out = {};
+    if (!parcial || has(b, 'veiculo_id')) {
+      const v = veiculoPorId(b.veiculo_id);
+      if (!v) return { erro: 'Escolha o veículo.' };
+      out.veiculo_id = v.id;
+      out.placa = v.placa; // cópia para o histórico continuar legível
+    }
+    if (!parcial || has(b, 'data')) {
+      const d = String(b.data || '').slice(0, 10);
+      if (!dataValida(d)) return { erro: 'Data da manutenção vazia ou inválida (use dd/mm/aaaa).' };
+      if (d > nowLocal().slice(0, 10)) return { erro: 'A data da manutenção não pode ser no futuro.' };
+      out.data = d;
+    }
+    if (!parcial || has(b, 'servico')) {
+      const s = textoLimpo(b.servico, 120);
+      if (!s) return { erro: 'Informe o serviço feito.' };
+      out.servico = s;
+    }
+    if (!parcial || has(b, 'tipo')) out.tipo = b.tipo === 'corretiva' ? 'corretiva' : 'preventiva';
+    if (!parcial || has(b, 'km')) {
+      const k = inteiroOuNull(b.km);
+      if (k != null && k > 9999999) return { erro: 'Km inválido.' };
+      out.km = k;
+    }
+    if (!parcial || has(b, 'custo_cents')) {
+      const c = b.custo_cents == null || b.custo_cents === '' ? null : parseInt(b.custo_cents, 10);
+      if (c != null && (isNaN(c) || c < 0 || c > 100000000000)) return { erro: 'Custo inválido.' };
+      out.custo_cents = c;
+    }
+    if (!parcial || has(b, 'oficina')) out.oficina = textoLimpo(b.oficina, 80);
+    if (!parcial || has(b, 'obs')) out.obs = textoLimpo(b.obs, 500);
+    return { campos: out };
+  }
+
+  // Números do veículo a partir das manutenções (lista e ficha).
+  function resumoVeiculo(v) {
+    let ultima = null, custo = 0, prev = 0, corr = 0, total = 0;
+    for (const m of DB.manutencoes) {
+      if (m.veiculo_id !== v.id) continue;
+      total += 1;
+      custo += m.custo_cents || 0;
+      if (m.tipo === 'corretiva') corr += 1; else prev += 1;
+      if (!ultima || m.data > ultima.data || (m.data === ultima.data && m.id > ultima.id)) ultima = m;
+    }
+    return Object.assign({}, v, {
+      manutencoes: total, preventivas: prev, corretivas: corr, custo_total_cents: custo,
+      ultima: ultima ? { id: ultima.id, data: ultima.data, servico: ultima.servico, km: ultima.km, tipo: ultima.tipo } : null,
+    });
+  }
+  function manutencaoView(m) {
+    const v = veiculoPorId(m.veiculo_id);
+    return Object.assign({}, m, {
+      placa: v ? v.placa : m.placa,
+      veiculo: v ? { id: v.id, placa: v.placa, frota: v.frota, marca: v.marca, modelo: v.modelo } : null,
+    });
+  }
+  // Quilometragem do veículo acompanha a manutenção mais alta registrada.
+  function atualizarKmVeiculo(v, km) {
+    if (km == null || !v) return false;
+    if (v.km_atual == null || km > v.km_atual) { v.km_atual = km; v.updated_at = nowLocal(); return true; }
+    return false;
+  }
+  const normFrota = (x) => { const t = String(x == null ? '' : x).trim().toLowerCase(); return /^\d+$/.test(t) ? String(parseInt(t, 10)) : t; };
+  const chaveManutencao = (m) => [m.veiculo_id, m.data, String(m.servico || '').trim().toLowerCase(), m.km == null ? '' : m.km].join('|');
 
   // Nota fiscal anexada à entrada de estoque: o arquivo é gravado pelo servidor
   // (server.js) e chega aqui só o nome, pelo "extra" da requisição — o corpo
@@ -919,6 +1073,7 @@
     assets: 'equipamentos', peripherals: 'equipamentos', people: 'pessoas', rooms: 'salas',
     homeoffice: 'homeoffice', epi: 'epis', materiais: 'materiais', frota: 'frota',
     inventory: 'inventario', inspections: 'inspecao', config: 'config',
+    veiculos: 'veiculos', manutencoes: 'manutencoes',
   };
   function acaoExigida(method, seg) {
     if (method === 'GET' || method === 'HEAD') return null;
@@ -945,6 +1100,9 @@
       else nivel = 'criar';                                        // conferir
     } else if (r1 === 'inspections') {
       nivel = 'criar'; // a rota confere se é o dono do rascunho ou se tem controle total
+    } else if (r1 === 'veiculos' || r1 === 'manutencoes') {
+      if (!s2 || s2 === 'importar') nivel = 'criar';             // cadastro e importação
+      else nivel = method === 'DELETE' ? 'excluir' : 'editar';
     } else if (r1 === 'config') {
       nivel = 'editar';
     } else {
@@ -1472,6 +1630,190 @@
         DB.frota_itens = DB.frota_itens.filter((f) => f !== cur);
         audit(actor, 'excluir', 'frota', cur.id, cur.nome, `Item de frota excluído (estoque: ${cur.quantidade} ${cur.unidade})`,
           { estoque: cur.quantidade, unidade: cur.unidade });
+        persist();
+        return ok({ ok: true });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
+    // --- frota: veículos (cadastro e importação por planilha) ---
+    if (r1 === 'veiculos') {
+      const id = seg[2];
+      if (!id) {
+        if (method === 'GET') {
+          const rows = DB.veiculos.slice()
+            .sort((a, b) => String(a.frota || '~').localeCompare(String(b.frota || '~'), 'pt-BR', { numeric: true })
+              || String(a.placa).localeCompare(String(b.placa)))
+            .map(resumoVeiculo);
+          return ok(rows);
+        }
+        if (method === 'POST') {
+          const r = camposVeiculo(body, false);
+          if (r.erro) return fail(400, r.erro);
+          if (DB.veiculos.some((v) => v.placa === r.campos.placa)) return fail(409, `A placa ${r.campos.placa} já está cadastrada.`);
+          const nid = nextId('veiculos');
+          const row = Object.assign({ id: nid }, r.campos, { created_at: nowLocal(), updated_at: nowLocal() });
+          DB.veiculos.push(row);
+          audit(actor, 'criar', 'veiculo', nid, row.placa,
+            [row.frota ? 'frota ' + row.frota : '', [row.marca, row.modelo, row.ano].filter(Boolean).join(' '), rotuloCatalogo(CATALOG.tiposVeiculo, row.tipo)].filter(Boolean).join(' · '));
+          persist();
+          return ok(resumoVeiculo(row), 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+      // Importação: cria as placas novas; com "atualizar", completa as que já existem.
+      if (id === 'importar' && method === 'POST') {
+        const linhas = Array.isArray(body.linhas) ? body.linhas.slice(0, 2000) : [];
+        if (!linhas.length) return fail(400, 'A planilha não tem linhas para importar.');
+        const atualizar = body.atualizar === true;
+        if (atualizar && !podeAtor(actor, 'veiculos', 'editar')) return fail(403, semPermissao(actor, 'veiculos', 'editar'));
+        const res = { criados: 0, atualizados: 0, ignorados: [], erros: [] };
+        const vistas = new Set();
+        linhas.forEach((ln, i) => {
+          const linha = ln && ln.linha ? ln.linha : i + 2;
+          const r = camposVeiculo(ln || {}, false);
+          if (r.erro) { res.erros.push({ linha, motivo: r.erro }); return; }
+          const c = r.campos;
+          if (vistas.has(c.placa)) { res.ignorados.push({ linha, motivo: `Placa ${c.placa} repetida na planilha` }); return; }
+          vistas.add(c.placa);
+          const existente = DB.veiculos.find((v) => v.placa === c.placa);
+          if (existente) {
+            if (!atualizar) { res.ignorados.push({ linha, motivo: `Placa ${c.placa} já cadastrada` }); return; }
+            // só completa com o que veio preenchido (célula vazia não apaga nada)
+            for (const k of ['frota', 'marca', 'modelo', 'ano', 'obs']) if (c[k] != null) existente[k] = c[k];
+            if (ln.tipo) existente.tipo = c.tipo;
+            if (ln.situacao) existente.situacao = c.situacao;
+            if (c.km_atual != null && (existente.km_atual == null || c.km_atual > existente.km_atual)) existente.km_atual = c.km_atual;
+            existente.updated_at = nowLocal();
+            res.atualizados += 1;
+            return;
+          }
+          DB.veiculos.push(Object.assign({ id: nextId('veiculos') }, c, { created_at: nowLocal(), updated_at: nowLocal() }));
+          res.criados += 1;
+        });
+        if (res.criados || res.atualizados) {
+          audit(actor, 'importar', 'veiculo', null, textoLimpo(body.arquivo, 120) || 'Planilha',
+            `Importação de veículos: ${res.criados} cadastrado(s), ${res.atualizados} atualizado(s), ${res.ignorados.length} ignorado(s), ${res.erros.length} com erro`);
+          persist();
+        }
+        return ok(res);
+      }
+      const cur = veiculoPorId(id);
+      if (!cur) return fail(404, 'Veículo não encontrado');
+      if (method === 'GET') {
+        const manut = DB.manutencoes.filter((m) => m.veiculo_id === cur.id)
+          .sort((a, b) => String(b.data).localeCompare(String(a.data)) || b.id - a.id)
+          .map(manutencaoView);
+        return ok(Object.assign(resumoVeiculo(cur), { historico: manut }));
+      }
+      if (method === 'PUT') {
+        const r = camposVeiculo(body, true);
+        if (r.erro) return fail(400, r.erro);
+        if (r.campos.placa && DB.veiculos.some((v) => v !== cur && v.placa === r.campos.placa)) {
+          return fail(409, `A placa ${r.campos.placa} já está cadastrada em outro veículo.`);
+        }
+        const mud = [];
+        for (const k of Object.keys(r.campos)) {
+          if (cur[k] !== r.campos[k]) {
+            mud.push(k === 'km_atual' ? `km ${cur[k] == null ? '—' : fmtKm(cur[k])} → ${r.campos[k] == null ? '—' : fmtKm(r.campos[k])}` : (CAMPO_VEICULO[k] || k));
+          }
+          cur[k] = r.campos[k];
+        }
+        cur.updated_at = nowLocal();
+        audit(actor, 'editar', 'veiculo', cur.id, cur.placa, mud.length ? 'Veículo atualizado — ' + mud.join(', ') : 'Veículo atualizado');
+        persist();
+        return ok(resumoVeiculo(cur));
+      }
+      if (method === 'DELETE') {
+        const n = DB.manutencoes.filter((m) => m.veiculo_id === cur.id).length;
+        if (n) return fail(409, `Este veículo tem ${n} manutenção(ões) no histórico e não pode ser excluído. Para tirá-lo de uso, mude a situação para “Inativo”.`);
+        DB.veiculos = DB.veiculos.filter((v) => v !== cur);
+        audit(actor, 'excluir', 'veiculo', cur.id, cur.placa, 'Veículo excluído (sem histórico de manutenção)');
+        persist();
+        return ok({ ok: true });
+      }
+      return fail(404, 'Rota não encontrada');
+    }
+
+    // --- frota: manutenções (histórico por veículo) ---
+    if (r1 === 'manutencoes') {
+      const id = seg[2];
+      if (!id) {
+        if (method === 'GET') {
+          let rows = DB.manutencoes.slice();
+          if (query.veiculo_id) rows = rows.filter((m) => String(m.veiculo_id) === String(query.veiculo_id));
+          if (query.tipo) rows = rows.filter((m) => m.tipo === query.tipo);
+          if (query.desde) rows = rows.filter((m) => String(m.data) >= String(query.desde));
+          if (query.ate) rows = rows.filter((m) => String(m.data) <= String(query.ate));
+          rows.sort((a, b) => String(b.data).localeCompare(String(a.data)) || b.id - a.id);
+          return ok(rows.map(manutencaoView));
+        }
+        if (method === 'POST') {
+          const r = camposManutencao(body, false);
+          if (r.erro) return fail(400, r.erro);
+          const nid = nextId('manutencoes');
+          const row = Object.assign({ id: nid }, r.campos, { created_at: nowLocal(), created_by: actor, updated_at: nowLocal() });
+          DB.manutencoes.push(row);
+          const v = veiculoPorId(row.veiculo_id);
+          const kmAtualizado = atualizarKmVeiculo(v, row.km);
+          audit(actor, 'criar', 'manutencao', nid, `${row.placa} · ${row.servico}`,
+            [rotuloCatalogo(CATALOG.tiposManutencao, row.tipo) + ' em ' + row.data.split('-').reverse().join('/'),
+              row.km != null ? fmtKm(row.km) : '', row.custo_cents != null ? reais(row.custo_cents) : '',
+              kmAtualizado ? 'km do veículo atualizado' : ''].filter(Boolean).join(' — '));
+          persist();
+          return ok(manutencaoView(row), 201);
+        }
+        return fail(404, 'Rota não encontrada');
+      }
+      // Importação do histórico: cada linha acha o veículo pela placa ou pelo nº da frota.
+      if (id === 'importar' && method === 'POST') {
+        const linhas = Array.isArray(body.linhas) ? body.linhas.slice(0, 5000) : [];
+        if (!linhas.length) return fail(400, 'A planilha não tem linhas para importar.');
+        const res = { criados: 0, ignorados: [], erros: [] };
+        const existentes = new Set(DB.manutencoes.map(chaveManutencao));
+        const kmVeic = {};
+        linhas.forEach((ln, i) => {
+          const linha = ln && ln.linha ? ln.linha : i + 2;
+          const ref = String((ln && (ln.placa || ln.frota)) || '').trim();
+          const placa = normPlaca(ln && ln.placa);
+          const v = (placa && DB.veiculos.find((x) => x.placa === placa))
+            || (ln && ln.frota ? DB.veiculos.find((x) => x.frota && normFrota(x.frota) === normFrota(ln.frota)) : null);
+          if (!v) { res.erros.push({ linha, motivo: ref ? `Veículo “${ref}” não cadastrado` : 'Linha sem placa nem nº da frota' }); return; }
+          const r = camposManutencao(Object.assign({}, ln, { veiculo_id: v.id }), false);
+          if (r.erro) { res.erros.push({ linha, motivo: r.erro }); return; }
+          const chave = chaveManutencao(r.campos);
+          if (existentes.has(chave)) { res.ignorados.push({ linha, motivo: 'Manutenção já registrada (mesmo veículo, data, serviço e km)' }); return; }
+          existentes.add(chave);
+          DB.manutencoes.push(Object.assign({ id: nextId('manutencoes') }, r.campos, { created_at: nowLocal(), created_by: actor, updated_at: nowLocal(), importada: true }));
+          if (atualizarKmVeiculo(v, r.campos.km)) kmVeic[v.placa] = v.km_atual;
+          res.criados += 1;
+        });
+        if (res.criados) {
+          audit(actor, 'importar', 'manutencao', null, textoLimpo(body.arquivo, 120) || 'Planilha',
+            `Importação de manutenções: ${res.criados} registrada(s), ${res.ignorados.length} ignorada(s), ${res.erros.length} com erro`
+            + (Object.keys(kmVeic).length ? ` — km atualizado em ${Object.keys(kmVeic).length} veículo(s)` : ''));
+          persist();
+        }
+        return ok(res);
+      }
+      const cur = DB.manutencoes.find((m) => String(m.id) === String(id));
+      if (!cur) return fail(404, 'Manutenção não encontrada');
+      if (method === 'GET') return ok(manutencaoView(cur));
+      if (method === 'PUT') {
+        const r = camposManutencao(body, true);
+        if (r.erro) return fail(400, r.erro);
+        const mud = Object.keys(r.campos).filter((k) => k !== 'placa' && cur[k] !== r.campos[k]).map((k) => CAMPO_MANUT[k] || k);
+        Object.assign(cur, r.campos, { updated_at: nowLocal() });
+        const kmAtualizado = atualizarKmVeiculo(veiculoPorId(cur.veiculo_id), cur.km);
+        audit(actor, 'editar', 'manutencao', cur.id, `${cur.placa} · ${cur.servico}`,
+          (mud.length ? 'Manutenção corrigida — ' + mud.join(', ') : 'Manutenção corrigida') + (kmAtualizado ? ' — km do veículo atualizado' : ''));
+        persist();
+        return ok(manutencaoView(cur));
+      }
+      if (method === 'DELETE') {
+        DB.manutencoes = DB.manutencoes.filter((m) => m !== cur);
+        audit(actor, 'excluir', 'manutencao', cur.id, `${cur.placa} · ${cur.servico}`,
+          `Manutenção de ${String(cur.data).split('-').reverse().join('/')} excluída`);
         persist();
         return ok({ ok: true });
       }
