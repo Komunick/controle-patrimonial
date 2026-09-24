@@ -52,6 +52,35 @@ fs.mkdirSync(EPI_ANEXOS_DIR, { recursive: true });
 // Fotos de evidência das inspeções 5S — também fora da pasta servida na web.
 const INSPECAO_FOTOS_DIR = path.join(db.DATA_DIR, 'inspecao-fotos');
 fs.mkdirSync(INSPECAO_FOTOS_DIR, { recursive: true });
+// Notas fiscais anexadas às entradas de estoque (Materiais e Frota) — idem.
+const NF_DIR = path.join(db.DATA_DIR, 'nf-anexos');
+fs.mkdirSync(NF_DIR, { recursive: true });
+const crypto = require('crypto');
+const NF_EXT = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const NF_CT = { pdf: 'application/pdf', jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+const NF_NOME_OK = /^nf-(?:material|frota)-\d+-[0-9a-f]{12}\.(?:pdf|jpg|png|webp)$/;
+
+// Confere e grava a nota fiscal (data URL em base64). Devolve { info } com o
+// nome gerado aqui (aleatório, impossível de adivinhar) ou { erro }.
+function salvarNotaFiscal(tipo, nf) {
+  const dataUrl = String((nf && nf.base64) || '');
+  const cab = /^data:(application\/pdf|image\/jpeg|image\/png|image\/webp);base64,/.exec(dataUrl);
+  if (!cab) return { erro: 'Nota fiscal em formato não aceito. Use foto (JPG, PNG ou WebP) ou PDF.' };
+  let buf;
+  try { buf = Buffer.from(dataUrl.slice(cab[0].length), 'base64'); }
+  catch (e) { return { erro: 'Arquivo da nota fiscal inválido.' }; }
+  if (!buf || buf.length < 100) return { erro: 'Arquivo da nota fiscal vazio ou inválido.' };
+  if (buf.length > 10 * 1024 * 1024) return { erro: 'Nota fiscal grande demais (máx. 10 MB).' };
+  const ehPdf = buf.slice(0, 5).toString('latin1') === '%PDF-';
+  const ehImagem = (buf[0] === 0xFF && buf[1] === 0xD8)                    // JPEG
+    || (buf[0] === 0x89 && buf[1] === 0x50)                                // PNG
+    || (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP');
+  if (cab[1] === 'application/pdf' ? !ehPdf : !ehImagem) return { erro: 'O arquivo não é uma imagem ou um PDF válido.' };
+  const arquivo = `nf-${tipo}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${NF_EXT[cab[1]]}`;
+  fs.writeFileSync(path.join(NF_DIR, arquivo), buf);
+  const nome = String((nf && nf.nome) || '').replace(/[\\/\r\n\t]+/g, ' ').trim().slice(0, 160) || null;
+  return { info: { arquivo, nome_original: nome, tipo: cab[1], tamanho: buf.length } };
+}
 const zlib = require('zlib');
 
 // Decodifica um PNG RGB 8 bits (colorType 2, sem entrelaçamento) para RGB cru —
@@ -814,6 +843,42 @@ function handleApi(req, res) {
         }
         if (rc.ok) notifyChange(urlPath, 'DELETE', operator, req);
         return sendJson(res, rc.status || 200, rc.ok ? rc.data : (rc.data || { error: 'Erro' }));
+      }
+      // Entrada de estoque (ou cadastro com estoque inicial) com a nota fiscal
+      // anexada: grava o arquivo aqui e passa para a base só o nome, pelo
+      // "extra" da requisição (o corpo vindo do navegador não define arquivo).
+      m = urlPath.match(/^\/api\/(materiais|frota)(?:\/(\d+)\/ajuste)?$/);
+      if (m && req.method === 'POST' && body && body.nf && typeof body.nf === 'object' && body.nf.base64) {
+        if (m[2] && !(parseInt(body.delta, 10) > 0)) {
+          return sendJson(res, 400, { error: 'A nota fiscal só pode ser anexada numa entrada de estoque.' });
+        }
+        const nfSalva = salvarNotaFiscal(m[1] === 'materiais' ? 'material' : 'frota', body.nf);
+        if (nfSalva.erro) return sendJson(res, 400, { error: nfSalva.erro });
+        delete body.nf;
+        const rc = db.request('POST', urlPath, body, operator, { nf: nfSalva.info });
+        if (!rc.ok) {
+          try { fs.unlinkSync(path.join(NF_DIR, nfSalva.info.arquivo)); } catch (e) { /* ignore */ }
+          return sendJson(res, rc.status || 400, rc.data || { error: 'Não foi possível registrar a entrada.' });
+        }
+        notifyChange(urlPath, 'POST', operator, req);
+        return sendJson(res, rc.status || 200, rc.data);
+      }
+      // Abrir a nota fiscal anexada (só arquivos da pasta de notas, pelo nome gerado aqui).
+      m = urlPath.match(/^\/api\/estoque\/nf\/([A-Za-z0-9._-]+)$/);
+      if (m && req.method === 'GET') {
+        if (!NF_NOME_OK.test(m[1])) return sendJson(res, 404, { error: 'Nota fiscal não encontrada.' });
+        const alvo = path.normalize(path.join(NF_DIR, m[1]));
+        if (!alvo.startsWith(NF_DIR + path.sep)) return sendJson(res, 403, { error: 'Arquivo inválido.' });
+        return fs.readFile(alvo, (err, data) => {
+          if (err) return sendJson(res, 404, { error: 'Arquivo da nota fiscal não encontrado no servidor.' });
+          send(res, 200, data, {
+            'Content-Type': NF_CT[m[1].split('.').pop()],
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'private, max-age=3600',
+            'Content-Disposition': `inline; filename="${m[1]}"`,
+            'Content-Length': data.length,
+          });
+        });
       }
       // Todas as demais rotas vão para a lógica compartilhada (store.js).
       // Atrás do proxy de assinatura/túnel a conexão chega por loopback — o IP

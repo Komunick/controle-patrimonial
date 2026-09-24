@@ -1360,7 +1360,7 @@
   }
 
   // Reduz a foto no navegador antes de enviar (celulares mandam fotos enormes).
-  function comprimirImagem(file) {
+  function comprimirImagem(file, maxLado) {
     return new Promise((resolve, reject) => {
       if (!file || !/^image\//.test(file.type)) return reject(new Error('Escolha um arquivo de imagem (foto).'));
       const url = URL.createObjectURL(file);
@@ -1368,7 +1368,7 @@
       img.onload = () => {
         URL.revokeObjectURL(url);
         try {
-          const MAX = 1600;
+          const MAX = maxLado || 1600;
           const f = Math.min(1, MAX / Math.max(img.width, img.height));
           const w = Math.max(1, Math.round(img.width * f));
           const h = Math.max(1, Math.round(img.height * f));
@@ -2224,27 +2224,117 @@
         <input id="mat-qtd" type="number" min="0" value="0"></div>`}
       <div class="field"><label for="mat-min">Estoque mínimo <span class="muted">(avisa quando chegar nesse número — opcional)</span></label>
         <input id="mat-min" type="number" min="0" value="${m && m.minimo != null ? m.minimo : ''}"></div>
+      ${m ? '' : campoNotaFiscal('Nota da compra do estoque inicial, se houver.')}
       <div class="form-actions">
         <button class="btn btn-ghost" id="mat-cancelar">Cancelar</button>
         <button class="btn btn-primary" id="mat-salvar">${m ? 'Salvar' : 'Cadastrar'}</button>
       </div>`;
     setTimeout(() => { const c = $('mat-nome'); if (c) c.focus(); }, 50);
+    const nfCad = m ? null : ligarNotaFiscal();
     $('mat-cancelar').onclick = closeDrawer;
     $('mat-salvar').onclick = async () => {
       const nome = $('mat-nome').value.trim();
       if (!nome) { toast('Informe o nome do material.', 'err'); return; }
       const minimo = $('mat-min').value === '' ? null : parseInt($('mat-min').value, 10) || 0;
+      const btn = $('mat-salvar');
+      btn.disabled = true;
       try {
         if (m) {
           await api('/api/materiais/' + m.id, { method: 'PUT', body: { nome, minimo } });
           toast('Material atualizado.');
         } else {
-          await api('/api/materiais', { method: 'POST', body: { nome, minimo, quantidade: parseInt($('mat-qtd').value, 10) || 0 } });
-          toast('Material cadastrado.');
+          const corpo = { nome, minimo, quantidade: parseInt($('mat-qtd').value, 10) || 0 };
+          const anexo = nfCad ? await nfCad.dados() : null;
+          if (anexo) corpo.nf = anexo;
+          await api('/api/materiais', { method: 'POST', body: corpo });
+          toast(anexo ? 'Material cadastrado com a nota fiscal.' : 'Material cadastrado.');
         }
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Nota fiscal na entrada de estoque (Materiais e Frota): foto ou PDF, opcional.
+  // A foto é reduzida no navegador (fica legível e leve); o PDF vai como está.
+  // O servidor grava o arquivo fora da pasta pública e a movimentação guarda o nome.
+  // ---------------------------------------------------------------------------
+  const NF_MAX_BYTES = 10 * 1024 * 1024;
+  // Caminho relativo: funciona na porta direta e também sob o portal unificado.
+  const nfUrl = (arquivo) => 'api/estoque/nf/' + encodeURIComponent(arquivo);
+  function tamanhoLegivel(n) {
+    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1).replace('.', ',') + ' MB';
+    return Math.max(1, Math.round(n / 1024)) + ' KB';
+  }
+  function lerComoDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const leitor = new FileReader();
+      leitor.onload = () => resolve(String(leitor.result || ''));
+      leitor.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
+      leitor.readAsDataURL(file);
+    });
+  }
+  function linkNotaFiscal(nf) {
+    if (!nf || !nf.arquivo) return '';
+    return `<a class="nf-link" href="${nfUrl(nf.arquivo)}" target="_blank" rel="noopener" title="${escapeHtml(nf.nome || 'Abrir a nota fiscal')}">📎 NF</a>`;
+  }
+  function campoNotaFiscal(ajuda) {
+    return `<div class="field"><label for="nf-escolher">Nota fiscal <span class="muted">(foto ou PDF — opcional)</span></label>
+      <div class="nf-anexo">
+        <input type="file" id="nf-arquivo" accept="image/*,application/pdf,.pdf" hidden>
+        <button type="button" class="btn btn-ghost btn-sm" id="nf-escolher">📎 Anexar foto ou PDF da nota</button>
+        <div class="nf-escolhido" id="nf-escolhido" hidden>
+          <img id="nf-mini" alt="" hidden>
+          <span class="nf-nome" id="nf-nome"></span>
+          <button type="button" class="icon-btn" id="nf-tirar" title="Remover o anexo">✕</button>
+        </div>
+      </div>
+      <div class="hint">${escapeHtml(ajuda || 'No celular dá para fotografar a nota na hora.')} Até 10 MB.</div></div>`;
+  }
+  // Liga o campo acima e devolve { tem(), dados() } — dados() entrega
+  // { base64, nome } pronto para enviar, ou null se nada foi anexado.
+  function ligarNotaFiscal() {
+    let arquivo = null;
+    const inp = $('nf-arquivo');
+    const ehPdf = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+    const mostrar = () => {
+      $('nf-escolhido').hidden = !arquivo;
+      $('nf-escolher').textContent = arquivo ? '📎 Trocar arquivo' : '📎 Anexar foto ou PDF da nota';
+      const mini = $('nf-mini');
+      if (mini.dataset.url) { URL.revokeObjectURL(mini.dataset.url); delete mini.dataset.url; }
+      if (arquivo && !ehPdf(arquivo)) {
+        mini.dataset.url = URL.createObjectURL(arquivo);
+        mini.src = mini.dataset.url;
+        mini.hidden = false;
+      } else { mini.hidden = true; mini.removeAttribute('src'); }
+      $('nf-nome').textContent = arquivo ? `${ehPdf(arquivo) ? 'PDF · ' : ''}${arquivo.name} · ${tamanhoLegivel(arquivo.size)}` : '';
+    };
+    $('nf-escolher').onclick = () => inp.click();
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      inp.value = '';
+      if (!f) return;
+      if (!ehPdf(f) && !/^image\//.test(f.type)) { toast('Escolha uma foto ou um PDF da nota fiscal.', 'err'); return; }
+      if (ehPdf(f) && f.size > NF_MAX_BYTES) { toast('PDF grande demais (máx. 10 MB).', 'err'); return; }
+      arquivo = f;
+      mostrar();
+    };
+    $('nf-tirar').onclick = () => { arquivo = null; mostrar(); };
+    return {
+      tem: () => !!arquivo,
+      async dados() {
+        if (!arquivo) return null;
+        let base64;
+        if (ehPdf(arquivo)) {
+          base64 = (await lerComoDataUrl(arquivo)).replace(/^data:[^;,]*;base64,/, 'data:application/pdf;base64,');
+        } else {
+          try { base64 = await comprimirImagem(arquivo, 2400); }
+          catch (e) { throw new Error('Não foi possível ler a foto da nota. Use JPG, PNG ou PDF.'); }
+        }
+        return { base64, nome: arquivo.name };
+      },
     };
   }
 
@@ -2256,24 +2346,29 @@
         <input id="aj-qtd" type="number" min="1" value="1"></div>
       <div class="field"><label for="aj-motivo">Motivo</label>
         <input id="aj-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234' : 'Ex.: perda; descarte; uso interno'}"></div>
+      ${sinal > 0 ? campoNotaFiscal() : ''}
       <div class="form-actions">
         <button class="btn btn-ghost" id="aj-cancelar">Cancelar</button>
         <button class="btn ${sinal > 0 ? 'btn-primary' : 'btn-saida'}" id="aj-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
       </div>`;
     setTimeout(() => { const c = $('aj-qtd'); if (c) { c.focus(); c.select(); } }, 50);
+    const nf = sinal > 0 ? ligarNotaFiscal() : null;
     $('aj-cancelar').onclick = closeDrawer;
     $('aj-salvar').onclick = async () => {
       const qtd = parseInt($('aj-qtd').value, 10) || 0;
       if (qtd < 1) { toast('Informe uma quantidade maior que zero.', 'err'); return; }
+      const btn = $('aj-salvar');
+      btn.disabled = true;
       try {
-        const r = await api(`/api/materiais/${m.id}/ajuste`, {
-          method: 'POST',
-          body: { delta: sinal * qtd, motivo: $('aj-motivo').value.trim() || null },
-        });
-        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada — estoque de “${r.nome}”: ${r.quantidade} un.`);
+        const corpo = { delta: sinal * qtd, motivo: $('aj-motivo').value.trim() || null };
+        const anexo = nf ? await nf.dados() : null;
+        if (anexo) corpo.nf = anexo;
+        const r = await api(`/api/materiais/${m.id}/ajuste`, { method: 'POST', body: corpo });
+        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada${anexo ? ' com a nota fiscal' : ''} — estoque de “${r.nome}”: ${r.quantidade} un.`);
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
     };
   }
 
@@ -2385,11 +2480,13 @@
         <input id="fr-apl" maxlength="160" value="${escapeHtml(f ? f.aplicacao || '' : '')}" placeholder="Ex.: Scania R450 — eixo dianteiro · toda a frota Volvo FH"></div>
       <div class="field"><label for="fr-obs">Observações</label>
         <textarea id="fr-obs" maxlength="400" placeholder="Fornecedor, código de referência, garantia…">${escapeHtml(f ? f.obs || '' : '')}</textarea></div>
+      ${f ? '' : campoNotaFiscal('Nota da compra do estoque inicial, se houver.')}
       <div class="form-actions">
         <button class="btn btn-ghost" id="fr-cancelar">Cancelar</button>
         <button class="btn btn-primary" id="fr-salvar">${f ? 'Salvar' : 'Cadastrar'}</button>
       </div>`;
     setTimeout(() => { const c = $('fr-nome'); if (c) c.focus(); }, 50);
+    const nfCad = f ? null : ligarNotaFiscal();
     $('fr-cancelar').onclick = closeDrawer;
     $('fr-salvar').onclick = async () => {
       const nome = $('fr-nome').value.trim();
@@ -2401,18 +2498,23 @@
         aplicacao: $('fr-apl').value.trim() || null,
         obs: $('fr-obs').value.trim() || null,
       };
+      const btn = $('fr-salvar');
+      btn.disabled = true;
       try {
         if (f) {
           await api('/api/frota/' + f.id, { method: 'PUT', body: dados });
           toast('Item de frota atualizado.');
         } else {
           dados.quantidade = parseInt($('fr-qtd').value, 10) || 0;
+          const anexo = nfCad ? await nfCad.dados() : null;
+          if (anexo) dados.nf = anexo;
           await api('/api/frota', { method: 'POST', body: dados });
-          toast('Item de frota cadastrado.');
+          toast(anexo ? 'Item de frota cadastrado com a nota fiscal.' : 'Item de frota cadastrado.');
         }
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
     };
   }
 
@@ -2426,29 +2528,34 @@
         <input id="fa-placa" maxlength="12" placeholder="Ex.: ABC1D23" style="text-transform:uppercase"></div>` : ''}
       <div class="field"><label for="fa-motivo">${sinal > 0 ? 'Origem / nota fiscal' : 'Motivo'}</label>
         <input id="fa-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234 · fornecedor' : 'Ex.: troca preventiva; furo; revisão dos 50 mil km'}"></div>
+      ${sinal > 0 ? campoNotaFiscal() : ''}
       <div class="form-actions">
         <button class="btn btn-ghost" id="fa-cancelar">Cancelar</button>
         <button class="btn ${sinal > 0 ? 'btn-primary' : 'btn-saida'}" id="fa-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
       </div>`;
     setTimeout(() => { const c = $('fa-qtd'); if (c) { c.focus(); c.select(); } }, 50);
+    const nf = sinal > 0 ? ligarNotaFiscal() : null;
     $('fa-cancelar').onclick = closeDrawer;
     $('fa-salvar').onclick = async () => {
       const qtd = parseInt($('fa-qtd').value, 10) || 0;
       if (qtd < 1) { toast('Informe uma quantidade maior que zero.', 'err'); return; }
       const placaEl = $('fa-placa');
+      const btn = $('fa-salvar');
+      btn.disabled = true;
       try {
-        const r = await api(`/api/frota/${f.id}/ajuste`, {
-          method: 'POST',
-          body: {
-            delta: sinal * qtd,
-            motivo: $('fa-motivo').value.trim() || null,
-            placa: placaEl ? (placaEl.value.trim().toUpperCase() || null) : null,
-          },
-        });
-        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada — estoque de “${r.nome}”: ${r.quantidade} ${r.unidade}.`);
+        const corpo = {
+          delta: sinal * qtd,
+          motivo: $('fa-motivo').value.trim() || null,
+          placa: placaEl ? (placaEl.value.trim().toUpperCase() || null) : null,
+        };
+        const anexo = nf ? await nf.dados() : null;
+        if (anexo) corpo.nf = anexo;
+        const r = await api(`/api/frota/${f.id}/ajuste`, { method: 'POST', body: corpo });
+        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada${anexo ? ' com a nota fiscal' : ''} — estoque de “${r.nome}”: ${r.quantidade} ${r.unidade}.`);
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
     };
   }
 
@@ -2597,6 +2704,7 @@
           <option value="editar">Edições</option>
           <option value="excluir">Exclusões</option>
         </select>
+        <label class="chk"><input type="checkbox" id="pa-so-nf"> Só com nota fiscal</label>
       </div>
       <div class="panel"><div id="pa-rows"></div></div>`;
 
@@ -2612,16 +2720,18 @@
     const drawMovs = () => {
       const term = ($('pa-q').value || '').toLowerCase();
       const acao = $('pa-acao').value;
+      const soNf = $('pa-so-nf').checked;
       const hit = (v) => v != null && String(v).toLowerCase().includes(term);
-      filtradas = noPeriodo.filter((r) => (!acao || r.action === acao)
-        && (!term || hit(r.item) || hit(r.actor) || hit(r.placa) || hit(r.motivo) || hit(r.detalhes)));
+      filtradas = noPeriodo.filter((r) => (!acao || r.action === acao) && (!soNf || r.nf)
+        && (!term || hit(r.item) || hit(r.actor) || hit(r.placa) || hit(r.motivo) || hit(r.detalhes) || hit(r.nf && r.nf.nome)));
       $('pa-rows').innerHTML = !filtradas.length
         ? '<div class="empty">Nenhuma movimentação para este filtro.</div>'
         : `<div class="table-wrap"><table class="mov-table">
             <thead><tr><th>Quando</th><th>Operador</th><th>Ação</th><th>Item</th><th class="num">Unidades</th><th class="num">Estoque após</th>${cfg.veiculos ? '<th>Veículo</th>' : ''}<th>Motivo / detalhes</th></tr></thead>
             <tbody>${filtradas.map((r) => {
               const a = ACAO_MOV[r.action] || { rotulo: r.action, cls: 'na' };
-              const txt = textoMov(r);
+              // Com o selo da nota na linha, o aviso 'NF anexada' do texto fica redundante.
+              const txt = r.nf ? textoMov(r).replace(/ — NF anexada$/, '') : textoMov(r);
               return `<tr>
                 <td class="nowrap">${fmtDateTime(r.ts)}</td>
                 <td>${escapeHtml(r.actor)}</td>
@@ -2630,7 +2740,7 @@
                 <td class="num">${qtdMovHtml(r)}</td>
                 <td class="num mono">${r.estoque == null ? '<span class="muted">—</span>' : escapeHtml(fmtQtd(r.estoque, r.unidade))}</td>
                 ${cfg.veiculos ? `<td>${r.placa ? `<span class="placa">${escapeHtml(r.placa)}</span>` : '<span class="muted">—</span>'}</td>` : ''}
-                <td class="muted">${txt ? escapeHtml(txt) : '—'}</td>
+                <td class="muted">${txt ? escapeHtml(txt) : (r.nf ? '' : '—')}${linkNotaFiscal(r.nf)}</td>
               </tr>`;
             }).join('')}</tbody></table></div>`;
     };
@@ -2714,6 +2824,7 @@
     let deb;
     $('pa-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(drawMovs, 200); });
     $('pa-acao').addEventListener('change', drawMovs);
+    $('pa-so-nf').addEventListener('change', drawMovs);
     drawPeriodo();
 
     // Planilha do painel: estoque atual, resumo por item, consumo por veículo
@@ -2737,9 +2848,10 @@
           veiculos.forEach((v) => Object.keys(v.itens).forEach((nome) => pv.push([v.placa, nome, v.itens[nome].qtd, v.itens[nome].unidade, v.lanc, v.ultima || ''])));
           add('Consumo por veículo', pv);
         }
-        const lm = [['Quando', 'Operador', 'Ação', 'Item', 'Quantidade', 'Unidade', 'Estoque após', 'Veículo', 'Motivo / detalhes']];
+        const lm = [['Quando', 'Operador', 'Ação', 'Item', 'Quantidade', 'Unidade', 'Estoque após', 'Veículo', 'Motivo / detalhes', 'Nota fiscal anexada']];
         filtradas.forEach((r) => lm.push([r.ts || '', r.actor || '', (ACAO_MOV[r.action] || {}).rotulo || r.action, r.item || '',
-          r.qtd == null ? '' : r.qtd, r.unidade || '', r.estoque == null ? '' : r.estoque, r.placa || '', textoMov(r)]));
+          r.qtd == null ? '' : r.qtd, r.unidade || '', r.estoque == null ? '' : r.estoque, r.placa || '', textoMov(r),
+          r.nf ? (r.nf.nome || r.nf.arquivo) : '']));
         add('Movimentações', lm);
         XLSX.writeFile(wb, `${cfg.arquivo}-${todayStr()}.xlsx`);
         toast('Planilha do painel baixada.');

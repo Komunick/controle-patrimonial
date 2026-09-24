@@ -632,17 +632,33 @@
     DB.audit_log.push(row);
   }
 
+  // Nota fiscal anexada à entrada de estoque: o arquivo é gravado pelo servidor
+  // (server.js) e chega aqui só o nome, pelo "extra" da requisição — o corpo
+  // enviado pelo navegador nunca define qual arquivo fica registrado.
+  function notaFiscalDoPedido() {
+    const n = reqExtra && reqExtra.nf;
+    if (!n || typeof n !== 'object') return null;
+    const arquivo = String(n.arquivo || '');
+    if (!/^nf-(material|frota)-\d+-[0-9a-f]{12}\.(pdf|jpg|png|webp)$/.test(arquivo)) return null;
+    return {
+      arquivo,
+      nome: n.nome_original ? String(n.nome_original).slice(0, 160) : null,
+      tipo: n.tipo ? String(n.tipo).slice(0, 40) : null,
+      tamanho: typeof n.tamanho === 'number' ? n.tamanho : null,
+    };
+  }
+
   // Movimentação de estoque (materiais e frota) montada a partir da auditoria.
   // Registros novos trazem "meta"; os antigos são lidos do texto dos detalhes.
   function movimentoDe(r) {
     const mv = {
       id: r.id, ts: r.ts, actor: r.actor, action: r.action, item_id: r.entity_id, item: r.entity_label,
-      qtd: null, unidade: null, estoque: null, placa: null, motivo: null, inicial: false,
+      qtd: null, unidade: null, estoque: null, placa: null, motivo: null, inicial: false, nf: null,
       detalhes: r.details == null ? null : String(r.details),
     };
     const m = r.meta && typeof r.meta === 'object' ? r.meta : null;
     if (m) {
-      for (const k of ['qtd', 'unidade', 'estoque', 'placa', 'motivo']) if (m[k] != null) mv[k] = m[k];
+      for (const k of ['qtd', 'unidade', 'estoque', 'placa', 'motivo', 'nf']) if (m[k] != null) mv[k] = m[k];
       mv.inicial = !!m.inicial;
       return mv;
     }
@@ -1316,8 +1332,9 @@
           const nid = nextId('materiais');
           const row = { id: nid, nome, quantidade, minimo, created_at: nowLocal(), updated_at: nowLocal() };
           DB.materiais.push(row);
-          audit(actor, 'criar', 'material', nid, nome, `Material cadastrado — ${quantidade} un. em estoque`,
-            { qtd: quantidade, unidade: 'un', estoque: quantidade, inicial: true });
+          const nfCad = notaFiscalDoPedido();
+          audit(actor, 'criar', 'material', nid, nome, `Material cadastrado — ${quantidade} un. em estoque${nfCad ? ' — NF anexada' : ''}`,
+            Object.assign({ qtd: quantidade, unidade: 'un', estoque: quantidade, inicial: true }, nfCad ? { nf: nfCad } : {}));
           persist();
           return ok(row, 201);
         }
@@ -1352,9 +1369,11 @@
         cur.quantidade = novo;
         cur.updated_at = nowLocal();
         const motivo = body.motivo ? ' — ' + String(body.motivo).slice(0, 200) : '';
+        const nfEnt = delta > 0 ? notaFiscalDoPedido() : null;
         audit(actor, delta > 0 ? 'entrada' : 'saida', 'material', cur.id, cur.nome,
-          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} un. (estoque: ${novo})${motivo}`,
-          { qtd: delta, unidade: 'un', estoque: novo, motivo: body.motivo ? String(body.motivo).slice(0, 200) : null });
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} un. (estoque: ${novo})${motivo}${nfEnt ? ' — NF anexada' : ''}`,
+          Object.assign({ qtd: delta, unidade: 'un', estoque: novo, motivo: body.motivo ? String(body.motivo).slice(0, 200) : null },
+            nfEnt ? { nf: nfEnt } : {}));
         persist();
         return ok(cur);
       }
@@ -1401,8 +1420,9 @@
             created_at: nowLocal(), updated_at: nowLocal(),
           };
           DB.frota_itens.push(row);
-          audit(actor, 'criar', 'frota', nid, nome, `Item de frota cadastrado (${catLabel(categoria)}) — ${quantidade} ${unidade} em estoque`,
-            { qtd: quantidade, unidade, estoque: quantidade, inicial: true });
+          const nfCad = notaFiscalDoPedido();
+          audit(actor, 'criar', 'frota', nid, nome, `Item de frota cadastrado (${catLabel(categoria)}) — ${quantidade} ${unidade} em estoque${nfCad ? ' — NF anexada' : ''}`,
+            Object.assign({ qtd: quantidade, unidade, estoque: quantidade, inicial: true }, nfCad ? { nf: nfCad } : {}));
           persist();
           return ok(row, 201);
         }
@@ -1440,9 +1460,11 @@
         const placa = texto(body.placa, 12);
         const motivo = texto(body.motivo, 200);
         const extras = [placa ? 'veículo ' + placa.toUpperCase() : '', motivo].filter(Boolean).join(' — ');
+        const nfEnt = delta > 0 ? notaFiscalDoPedido() : null;
         audit(actor, delta > 0 ? 'entrada' : 'saida', 'frota', cur.id, cur.nome,
-          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} ${cur.unidade} (estoque: ${novo})${extras ? ' — ' + extras : ''}`,
-          { qtd: delta, unidade: cur.unidade, estoque: novo, placa: placa ? placa.toUpperCase() : null, motivo });
+          `${delta > 0 ? 'Entrada' : 'Saída'} de ${Math.abs(delta)} ${cur.unidade} (estoque: ${novo})${extras ? ' — ' + extras : ''}${nfEnt ? ' — NF anexada' : ''}`,
+          Object.assign({ qtd: delta, unidade: cur.unidade, estoque: novo, placa: placa ? placa.toUpperCase() : null, motivo },
+            nfEnt ? { nf: nfEnt } : {}));
         persist();
         return ok(cur);
       }

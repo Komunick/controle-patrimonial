@@ -983,3 +983,20 @@ textarea.insp-texto { max-width: 100%; resize: vertical; }
 @media (max-width: 880px) {
   .field-row.tres { grid-template-columns: 1fr; }
 }
+
+/* ===================== Nota fiscal na entrada de estoque ===================== */
+.nf-anexo { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.nf-escolhido {
+  display: flex; align-items: center; gap: 10px; max-width: 100%;
+  padding: 6px 6px 6px 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.nf-escolhido[hidden] { display: none; }
+.nf-escolhido img { width: 44px; height: 44px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); flex: none; }
+.nf-escolhido img[hidden] { display: none; }
+.nf-nome { font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.nf-link {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; padding: 1px 8px;
+  border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface);
+  font-size: 11.5px; font-weight: 700; color: var(--accent-ink); text-decoration: none; white-space: nowrap;
+}
+.nf-link:hover { border-color: var(--accent); }

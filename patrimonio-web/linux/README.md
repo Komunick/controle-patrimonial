@@ -197,6 +197,7 @@ Por padrão, os dados definitivos ficam em:
 /var/lib/controle-patrimonial/backups/
 /var/lib/controle-patrimonial/epi-anexos/
 /var/lib/controle-patrimonial/inspecao-fotos/
+/var/lib/controle-patrimonial/nf-anexos/
 ```
 
 Inclua toda a pasta `/var/lib/controle-patrimonial` no backup externo da VM.
