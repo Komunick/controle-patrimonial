@@ -218,8 +218,9 @@
   // ---------------------------------------------------------------------------
   // Drawer lateral
   // ---------------------------------------------------------------------------
-  function openDrawer(title) {
+  function openDrawer(title, opts) {
     $('drawer-title').textContent = title || '';
+    $('drawer').classList.toggle('drawer-largo', !!(opts && opts.largo));
     const bd = $('drawer-backdrop');
     bd.hidden = false;
     requestAnimationFrame(() => bd.classList.add('show'));
@@ -271,8 +272,10 @@
     { seg: 'homeoffice', label: 'Home Office', ico: '⇄' },
     { seg: 'epis', label: 'EPIs', ico: '⛑' },
     { seg: 'materiais', label: 'Materiais', ico: '▤', children: [
-      { seg: 'materiais/painel', label: 'Painel administrativo', ico: '◫', adminOnly: true },
-      { seg: 'materiais/frota', label: 'Frota', ico: '⛟' },
+      { seg: 'materiais/painel', aba: 'materiais_painel', label: 'Painel administrativo', ico: '◫' },
+    ] },
+    { seg: 'frota', label: 'Frota', ico: '⛟', children: [
+      { seg: 'frota/painel', aba: 'frota_painel', label: 'Painel administrativo', ico: '◫' },
     ] },
     { sep: true },
     { seg: 'inventario', label: 'Inventário', ico: '☑' },
@@ -283,21 +286,90 @@
     { seg: 'operadores', label: 'Operadores', ico: '◉', adminOnly: true },
     { seg: 'config', label: 'Configurações', ico: '⚙' },
   ];
+  // ---------------------------------------------------------------------------
+  // Acessos por aba — o servidor manda em state.user.acesso o nível que vale
+  // em cada aba (já com o bloqueio de alteração aplicado). O servidor também
+  // confere cada ação; aqui é só para esconder o que o operador não pode usar.
+  // ---------------------------------------------------------------------------
+  const NIVEL_IDX = { nenhum: 0, ver: 1, criar: 2, editar: 3, excluir: 4 };
+  function nivelAba(aba) {
+    if (isAdmin()) return NIVEL_IDX.excluir;
+    const ac = (state.user && state.user.acesso) || {};
+    return NIVEL_IDX[ac[aba]] || 0;
+  }
+  const pode = (aba, nivel) => nivelAba(aba) >= NIVEL_IDX[nivel || 'ver'];
+  // Botões e formulários marcados com data-req="aba:nível" somem quando o
+  // operador não tem aquele nível: uma regra de CSS para cada combinação negada.
+  function aplicarPermissoesCss() {
+    let css = '';
+    for (const a of ((state.catalog && state.catalog.abas) || [])) {
+      for (const n of ['ver', 'criar', 'editar', 'excluir']) {
+        if (!pode(a.key, n)) css += `[data-req~="${a.key}:${n}"]{display:none!important}`;
+      }
+    }
+    let st = $('perm-css');
+    if (!st) { st = document.createElement('style'); st.id = 'perm-css'; document.head.appendChild(st); }
+    st.textContent = css;
+  }
+  const navVisivel = (n) => (n.adminOnly ? isAdmin() : pode(n.aba || n.seg, 'ver'));
+  function primeiraRota() {
+    for (const n of NAV) {
+      if (n.sep) continue;
+      if (navVisivel(n)) return '#/' + n.seg;
+      const c = (n.children || []).find(navVisivel);
+      if (c) return '#/' + c.seg;
+    }
+    return null;
+  }
+  // Rota → aba e nível exigidos (null = rota sem controle de acesso).
+  function acessoDaRota(seg, rest) {
+    if (seg === 'operadores') return { admin: true };
+    if (seg === 'a') return { algum: ['equipamentos', 'pesquisa'] };
+    if (seg === 'materiais' && rest[0] === 'frota') return { aba: 'frota', nivel: 'ver' };
+    if ((seg === 'materiais' || seg === 'frota') && rest[0] === 'painel') return { aba: seg + '_painel', nivel: 'ver' };
+    if (seg === 'inspecao' && rest[0] === 'preencher') return { aba: 'inspecao', nivel: 'criar' };
+    if (((state.catalog && state.catalog.abas) || []).some((a) => a.key === seg)) return { aba: seg, nivel: 'ver' };
+    return null;
+  }
+  function temAcesso(r) {
+    if (!r) return true;
+    if (r.admin) return isAdmin();
+    if (r.algum) return r.algum.some((k) => pode(k, 'ver'));
+    return pode(r.aba, r.nivel);
+  }
+  function negarRota() {
+    const alvo = primeiraRota();
+    if (alvo && alvo !== location.hash) {
+      toast('Seu usuário não tem acesso a esta aba.', 'err');
+      location.hash = alvo;
+      return;
+    }
+    setActive('', []);
+    setTitle('Sem acesso');
+    setTopbar('');
+    view().innerHTML = '<div class="empty"><strong>Nenhuma aba liberada</strong>Seu usuário ainda não tem acesso a nenhuma aba do sistema. Fale com um administrador.</div>';
+  }
+
   function buildNav() {
-    const link = (n, sub) => `<a href="#/${n.seg}" data-seg="${n.seg}"${sub ? ' class="sub"' : ''}><span class="ico">${n.ico}</span>${escapeHtml(n.label)}</a>`;
-    $('nav').innerHTML = NAV
-      .filter((n) => !n.adminOnly || isAdmin())
-      .map((n) => {
-        if (n.sep) return '<div class="nav-sep"></div>';
-        // Sub-abas (ex.: Materiais ▸ Painel administrativo / Frota) ficam
-        // indentadas logo abaixo da aba-mãe.
-        const filhos = (n.children || []).filter((c) => !c.adminOnly || isAdmin());
-        return link(n) + (filhos.length ? `<div class="nav-sub">${filhos.map((c) => link(c, true)).join('')}</div>` : '');
-      })
-      .join('');
+    const link = (n, sub, rotulo) => `<a href="#/${n.seg}" data-seg="${n.seg}"${sub ? ' class="sub"' : ''}><span class="ico">${n.ico}</span>${escapeHtml(rotulo || n.label)}</a>`;
+    const partes = [];
+    for (const n of NAV) {
+      if (n.sep) { if (partes.length && partes[partes.length - 1] !== 'sep') partes.push('sep'); continue; }
+      const filhos = (n.children || []).filter(navVisivel);
+      if (navVisivel(n)) {
+        // Sub-abas (ex.: Materiais ▸ Painel administrativo) ficam indentadas
+        // logo abaixo da aba-mãe.
+        partes.push(link(n) + (filhos.length ? `<div class="nav-sub">${filhos.map((c) => link(c, true)).join('')}</div>` : ''));
+      } else {
+        // Sem acesso à aba-mãe, mas com acesso à sub-aba: ela aparece sozinha.
+        filhos.forEach((c) => partes.push(link(c, false, n.label + ' · ' + c.label)));
+      }
+    }
+    while (partes.length && partes[partes.length - 1] === 'sep') partes.pop();
+    $('nav').innerHTML = partes.map((p) => (p === 'sep' ? '<div class="nav-sep"></div>' : p)).join('');
   }
   function setActive(seg, rest) {
-    // Numa sub-aba (ex.: materiais/frota) acende o link dela e deixa a aba-mãe
+    // Numa sub-aba (ex.: frota/painel) acende o link dela e deixa a aba-mãe
     // marcada como "aberta"; fora disso acende só a aba principal.
     const links = Array.from(document.querySelectorAll('#nav a'));
     const sub = rest && rest.length ? seg + '/' + rest[0] : '';
@@ -325,6 +397,7 @@
     const { seg, rest } = parseHash();
     state.route = { seg, rest };
 
+    if (!temAcesso(acessoDaRota(seg, rest))) { negarRota(); return; }
     if (seg === 'a') { // rota especial: abrir item por patrimônio
       await openAssetByTag(decodeURIComponent(rest.join('/')));
       return;
@@ -341,12 +414,13 @@
         case 'homeoffice': setTitle('Home Office'); await renderHomeOffice(); break;
         case 'epis': setTitle('Entrega de EPIs'); await renderEpis(); break;
         case 'materiais':
-          if (rest[0] === 'painel') {
-            if (!isAdmin()) { location.hash = '#/materiais'; return; }
-            setTitle('Materiais · Painel administrativo'); await renderMateriaisPainel();
-          } else if (rest[0] === 'frota') {
-            setTitle('Materiais · Frota'); await renderFrota();
-          } else { setTitle('Relação de materiais'); await renderMateriais(); }
+          if (rest[0] === 'frota') { location.hash = '#/frota'; return; } // endereço antigo da Frota
+          if (rest[0] === 'painel') { setTitle('Materiais · Painel administrativo'); await renderPainelEstoque('material'); }
+          else { setTitle('Relação de materiais'); await renderMateriais(); }
+          break;
+        case 'frota':
+          if (rest[0] === 'painel') { setTitle('Frota · Painel administrativo'); await renderPainelEstoque('frota'); }
+          else { setTitle('Frota'); await renderFrota(); }
           break;
         case 'inventario': setTitle('Inventário'); setTopbar(''); await renderInventory(); break;
         case 'inspecao':
@@ -360,7 +434,7 @@
           if (!isAdmin()) { location.hash = '#/painel'; return; }
           setTitle('Operadores'); setTopbar(''); await renderOperators(); break;
         case 'config': setTitle('Configurações'); setTopbar(''); await renderConfig(); break;
-        default: location.hash = '#/painel';
+        default: location.hash = primeiraRota() || '#/painel';
       }
     } catch (e) {
       view().innerHTML = `<div class="empty">Erro ao carregar: ${escapeHtml(e.message)}</div>`;
@@ -452,7 +526,7 @@
   // ---------------------------------------------------------------------------
   async function renderItems() {
     await ensurePeople();
-    setTopbar('<button class="btn btn-primary" id="btn-new">+ Novo item</button>');
+    setTopbar('<button class="btn btn-primary" id="btn-new" data-req="equipamentos:criar">+ Novo item</button>');
 
     const typeFilterOpts = '<option value="">Todos os tipos</option>' +
       state.catalog.groups.flatMap((g) => g.types.map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`)).join('');
@@ -523,8 +597,8 @@
           <td class="num val-cur">${fmtCurrency(a.value_cents)}</td>
           <td>${statusPill(a.status)}</td>
           <td><div class="row-actions">
-            <button class="icon-btn" data-edit="${a.id}" title="Editar">✎</button>
-            <button class="icon-btn" data-del="${a.id}" data-tag="${escapeHtml(a.asset_tag)}" title="Excluir">🗑</button>
+            <button class="icon-btn" data-edit="${a.id}" data-req="equipamentos:editar" title="Editar">✎</button>
+            <button class="icon-btn" data-req="equipamentos:excluir" data-del="${a.id}" data-tag="${escapeHtml(a.asset_tag)}" title="Excluir">🗑</button>
           </div></td>
         </tr>`).join('')}</tbody></table></div>`;
   }
@@ -879,14 +953,14 @@
       </dl>
 
       <div class="form-actions" style="justify-content:flex-start">
-        <button class="btn btn-ghost btn-sm" id="d-edit">✎ Editar</button>
-        <button class="btn btn-danger btn-sm" id="d-del">🗑 Excluir</button>
+        <button class="btn btn-ghost btn-sm" id="d-edit" data-req="equipamentos:editar">✎ Editar</button>
+        <button class="btn btn-danger btn-sm" id="d-del" data-req="equipamentos:excluir">🗑 Excluir</button>
       </div>
 
       <div class="sub">
         <div class="sub-title">${isEquip ? 'Donos / Turnos' : 'Responsável'} <span class="count">${a.owners.length}</span></div>
         <div class="owners" id="d-owners">${ownersList(a, isEquip)}</div>
-        <div class="inline-form" id="d-owner-form">
+        <div class="inline-form" id="d-owner-form" data-req="equipamentos:editar">
           <select id="o-person">${peopleOptions('', 'Selecione a pessoa…')}</select>
           ${isEquip ? `<select id="o-shift">${shiftOptions('integral')}</select>` : ''}
           <button class="btn btn-primary btn-sm" id="o-add">Adicionar ${isEquip ? 'dono' : 'responsável'}</button>
@@ -897,9 +971,9 @@
         <div class="sub-title">Local <span class="count">${a.location ? 1 : 0}</span></div>
         <div class="owners" id="d-local">${a.location
           ? `<div class="line-item"><div class="li-main"><div class="li-title">${escapeHtml(a.location)}</div></div>
-             <div class="row-actions"><button class="icon-btn" id="l-rm" title="Remover local">✕</button></div></div>`
+             <div class="row-actions"><button class="icon-btn" id="l-rm" data-req="equipamentos:editar" title="Remover local">✕</button></div></div>`
           : '<div class="empty">Nenhum local definido.</div>'}</div>
-        <div class="inline-form" id="d-local-form">
+        <div class="inline-form" id="d-local-form" data-req="equipamentos:editar">
           <select id="l-room">${roomOptions(a.location)}</select>
           <input id="l-new" maxlength="80" placeholder="…ou digite um novo local">
           <button class="btn btn-primary btn-sm" id="l-add">Adicionar local</button>
@@ -909,7 +983,7 @@
       <div class="sub">
         <div class="sub-title">Sub-itens (periféricos) <span class="count">${a.peripherals.length}</span></div>
         <div id="d-peripherals">${peripheralsList(a)}</div>
-        <div class="inline-form" id="d-per-form">
+        <div class="inline-form" id="d-per-form" data-req="equipamentos:criar">
           <select id="p-type">${peripheralTypeOptions('')}</select>
           <select id="p-owner">${peopleOptions('', 'Dono (opcional)…')}</select>
           <input id="p-brand" placeholder="Marca">
@@ -995,7 +1069,7 @@
           <div class="li-title">${escapeHtml(o.name)} ${isEquip ? shiftPill(o.shift) : ''}</div>
           ${o.department ? `<div class="li-sub">${escapeHtml(o.department)}</div>` : ''}
         </div>
-        <div class="row-actions"><button class="icon-btn" data-rm-owner="${o.id}" title="Remover">✕</button></div>
+        <div class="row-actions"><button class="icon-btn" data-rm-owner="${o.id}" data-req="equipamentos:editar" title="Remover">✕</button></div>
       </div>`).join('');
   }
   function wireOwnerRemoval(a, isEquip) {
@@ -1019,7 +1093,7 @@
           <div class="li-sub">${[p.brand, p.model].filter(Boolean).map(escapeHtml).join(' ') || '—'}${p.owner_name ? ' · ' + escapeHtml(p.owner_name) : ''}</div>
         </div>
         <div class="li-val val-cur">${fmtCurrency(p.value_cents)}</div>
-        <div class="row-actions"><button class="icon-btn" data-rm-per="${p.id}" title="Remover">✕</button></div>
+        <div class="row-actions"><button class="icon-btn" data-rm-per="${p.id}" data-req="equipamentos:excluir" title="Remover">✕</button></div>
       </div>`).join('');
   }
   function wirePeripheralRemoval(a) {
@@ -1044,7 +1118,7 @@
   // Pessoas
   // ---------------------------------------------------------------------------
   async function renderPeople() {
-    setTopbar(`<button class="btn btn-primary" id="btn-new-person">+ Nova pessoa</button>`);
+    setTopbar(`<button class="btn btn-primary" id="btn-new-person" data-req="pessoas:criar">+ Nova pessoa</button>`);
     view().innerHTML = `
       <div class="toolbar"><div class="search"><input id="flt-pq" placeholder="Buscar pessoa por nome, matrícula ou departamento…"></div></div>
       <div class="panel"><div id="people-rows"></div></div>`;
@@ -1089,8 +1163,8 @@
           <td class="num mono">${p.equip_count || 0}</td>
           <td class="num mono">${p.periph_count || 0}</td>
           <td><div class="row-actions">
-            <button class="icon-btn" data-edit="${p.id}" title="Editar">✎</button>
-            <button class="icon-btn" data-del="${p.id}" data-name="${escapeHtml(p.name)}" title="Excluir">🗑</button>
+            <button class="icon-btn" data-edit="${p.id}" data-req="pessoas:editar" title="Editar">✎</button>
+            <button class="icon-btn" data-req="pessoas:excluir" data-del="${p.id}" data-name="${escapeHtml(p.name)}" title="Excluir">🗑</button>
           </div></td>
         </tr>`).join('')}</tbody></table></div>`;
   }
@@ -1146,7 +1220,7 @@
         ${p.phone ? `<dt>Telefone</dt><dd>${escapeHtml(p.phone)}</dd>` : ''}
         ${p.notes ? `<dt>Observações</dt><dd>${escapeHtml(p.notes)}</dd>` : ''}
       </dl>
-      <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-ghost btn-sm" id="pd-edit">✎ Editar</button></div>
+      <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-ghost btn-sm" id="pd-edit" data-req="pessoas:editar">✎ Editar</button></div>
 
       <div class="sub">
         <div class="sub-title">Equipamentos atribuídos <span class="count">${p.assignments.length}</span></div>
@@ -1191,14 +1265,14 @@
           <td class="num mono">${r.item_count || 0}</td>
           <td>${r.notes ? escapeHtml(r.notes) : '<span class="muted">—</span>'}</td>
           <td><div class="row-actions">
-            <button class="icon-btn" data-edit="${r.id}" title="Editar">✎</button>
-            <button class="icon-btn" data-del="${r.id}" data-name="${escapeHtml(r.name)}" title="Excluir">🗑</button>
+            <button class="icon-btn" data-edit="${r.id}" data-req="salas:editar" title="Editar">✎</button>
+            <button class="icon-btn" data-req="salas:excluir" data-del="${r.id}" data-name="${escapeHtml(r.name)}" title="Excluir">🗑</button>
           </div></td>
         </tr>`).join('')}</tbody></table></div>`;
   }
 
   async function renderRooms() {
-    setTopbar('<button class="btn btn-primary" id="btn-new-room">+ Novo local</button>');
+    setTopbar('<button class="btn btn-primary" id="btn-new-room" data-req="salas:criar">+ Novo local</button>');
     view().innerHTML = `
       <div class="toolbar"><div class="search"><input id="rm-q" placeholder="Buscar local…"></div></div>
       <div class="panel"><div id="room-rows"></div></div>`;
@@ -1333,7 +1407,7 @@
   async function renderInspecao5S() {
     setTopbar(`
       <button class="btn btn-ghost" id="insp-relatorio">Relatório semanal</button>
-      <button class="btn btn-primary" id="insp-nova">+ Iniciar inspeção</button>`);
+      <button class="btn btn-primary" id="insp-nova" data-req="inspecao:criar">+ Iniciar inspeção</button>`);
     $('insp-nova').onclick = iniciarInspecao;
     view().innerHTML = '<div class="empty">Carregando…</div>';
     const inspecoes = await api('/api/inspections'); // já vem mais recente primeiro
@@ -1377,8 +1451,12 @@
         if (g !== grupo) { grupo = g; html += `<tr class="insp-grupo"><td colspan="6">${escapeHtml(g)}</td></tr>`; }
         const emAndamento = (i.status || 'concluida') === 'em_andamento';
         // rascunho é de quem o iniciou: só o dono (ou admin) continua/descarta
-        const podeContinuar = emAndamento && (isAdmin() || i.inspector === state.operator);
-        const podeExcluir = isAdmin() || (emAndamento && i.inspector === state.operator);
+        // Controle total (nível Excluir) mexe em qualquer inspeção; quem só
+        // cadastra continua e descarta apenas os próprios rascunhos.
+        const controleTotal = pode('inspecao', 'excluir');
+        const minha = i.inspector === state.operator;
+        const podeContinuar = emAndamento && pode('inspecao', 'criar') && (controleTotal || minha);
+        const podeExcluir = controleTotal || (emAndamento && minha && pode('inspecao', 'criar'));
         html += `<tr class="insp-linha" data-id="${i.id}">
           <td><div class="insp-nome">
             <span class="insp-avatar">${escapeHtml(inspIniciais(i.template_nome))}</span>
@@ -1430,8 +1508,8 @@
           const i = inspecoes.find((x) => String(x.id) === tr.dataset.id);
           if (!i) return;
           if ((i.status || 'concluida') === 'em_andamento') {
-            if (isAdmin() || i.inspector === state.operator) location.hash = '#/inspecao/preencher/' + i.id;
-            else toast(`Somente ${i.inspector || 'quem iniciou'} (ou um administrador) pode continuar esta inspeção.`, 'err');
+            if (pode('inspecao', 'criar') && (pode('inspecao', 'excluir') || i.inspector === state.operator)) location.hash = '#/inspecao/preencher/' + i.id;
+            else toast(`Somente ${i.inspector || 'quem iniciou'} (ou quem tem controle total da Inspeção 5S) pode continuar esta inspeção.`, 'err');
           } else detalheInspecao(i);
         };
       });
@@ -1532,8 +1610,8 @@
       location.hash = '#/inspecao';
       return;
     }
-    if (!isAdmin() && insp.inspector !== state.operator) {
-      toast(`Somente ${insp.inspector || 'quem iniciou'} (ou um administrador) pode continuar esta inspeção.`, 'err');
+    if (!pode('inspecao', 'excluir') && insp.inspector !== state.operator) {
+      toast(`Somente ${insp.inspector || 'quem iniciou'} (ou quem tem controle total da Inspeção 5S) pode continuar esta inspeção.`, 'err');
       location.hash = '#/inspecao';
       return;
     }
@@ -2046,7 +2124,7 @@
             ${it.obs ? `<span class="muted"> — ${escapeHtml(it.obs)}</span>` : ''}</div>${it.qid ? fotosDe(it.qid) : ''}</div>`;
         }).join('')}`).join('')}
       <div class="form-actions">
-        ${isAdmin() ? '<button class="btn btn-ghost" id="insp-del">Excluir inspeção</button>' : ''}
+        ${pode('inspecao', 'excluir') ? '<button class="btn btn-ghost" id="insp-del">Excluir inspeção</button>' : ''}
       </div>`;
     const ex = $('insp-del');
     if (ex) {
@@ -2066,7 +2144,7 @@
   // A entrega de EPI dá baixa automática quando o nome bate com um material.
   // ---------------------------------------------------------------------------
   async function renderMateriais() {
-    setTopbar('<button class="btn btn-primary" id="mat-new">+ Novo material</button>');
+    setTopbar('<button class="btn btn-primary" id="mat-new" data-req="materiais:criar">+ Novo material</button>');
     $('mat-new').onclick = () => materialForm();
     view().innerHTML = '<div class="empty">Carregando…</div>';
     const materiais = await api('/api/materiais');
@@ -2098,10 +2176,10 @@
                 <td class="num mono">${m.minimo == null ? '—' : m.minimo}</td>
                 <td>${fmtDateTime(m.updated_at || m.created_at)}</td>
                 <td><div class="row-actions">
-                  <button class="btn btn-mini btn-primary" data-entrada="${m.id}">+ Entrada</button>
-                  <button class="btn btn-mini btn-ghost" data-saida="${m.id}">− Saída</button>
-                  <button class="btn btn-mini btn-ghost" data-editar="${m.id}">Editar</button>
-                  ${isAdmin() ? `<button class="btn btn-mini btn-ghost" data-excluir="${m.id}" title="Excluir material">🗑</button>` : ''}
+                  <button class="btn btn-mini btn-primary" data-entrada="${m.id}" data-req="materiais:criar">+ Entrada</button>
+                  <button class="btn btn-mini btn-saida" data-saida="${m.id}" data-req="materiais:criar">− Saída</button>
+                  <button class="btn btn-mini btn-ghost" data-editar="${m.id}" data-req="materiais:editar">Editar</button>
+                  <button class="btn btn-mini btn-ghost" data-excluir="${m.id}" data-req="materiais:excluir" title="Excluir material">🗑</button>
                 </div></td>
               </tr>`;
             }).join('')}</tbody></table></div>`;
@@ -2180,7 +2258,7 @@
         <input id="aj-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234' : 'Ex.: perda; descarte; uso interno'}"></div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="aj-cancelar">Cancelar</button>
-        <button class="btn btn-primary" id="aj-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
+        <button class="btn ${sinal > 0 ? 'btn-primary' : 'btn-saida'}" id="aj-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
       </div>`;
     setTimeout(() => { const c = $('aj-qtd'); if (c) { c.focus(); c.select(); } }, 50);
     $('aj-cancelar').onclick = closeDrawer;
@@ -2210,11 +2288,12 @@
   const frotaAbaixo = (f) => f.minimo != null && f.quantidade <= f.minimo;
 
   async function renderFrota() {
-    setTopbar('<button class="btn btn-primary" id="frota-new">+ Novo item de frota</button>');
+    setTopbar('<button class="btn btn-primary" id="frota-new" data-req="frota:criar">+ Novo item de frota</button>');
     $('frota-new').onclick = () => frotaForm();
     view().innerHTML = '<div class="empty">Carregando…</div>';
     const itens = await api('/api/frota');
-    const unidades = itens.reduce((s, f) => s + (f.quantidade || 0), 0);
+    const porUnidade = {};
+    itens.forEach((f) => { const u = f.unidade || 'un'; porUnidade[u] = (porUnidade[u] || 0) + (f.quantidade || 0); });
     const baixos = itens.filter(frotaAbaixo);
     const catOpts = '<option value="">Todas as categorias</option>' + frotaCategorias()
       .map((c) => `<option value="${c.key}">${escapeHtml(c.label)}</option>`).join('');
@@ -2222,7 +2301,7 @@
     view().innerHTML = `
       <div class="cards">
         ${statCard('Itens de frota cadastrados', itens.length)}
-        ${statCard('Unidades em estoque', unidades, 'is-accent')}
+        ${statCard('Em estoque', somaPorUnidade(porUnidade) || '0', 'is-accent')}
         ${statCard('Abaixo do mínimo', baixos.length, baixos.length ? 'is-warn' : '')}
       </div>
       <div class="toolbar">
@@ -2248,14 +2327,14 @@
                     ${f.marca || f.aplicacao ? `<div class="cell-sub">${[f.marca, f.aplicacao].filter(Boolean).map(escapeHtml).join(' · ')}</div>` : ''}
                     ${frotaAbaixo(f) ? '<span class="s5-chip warn">Abaixo do mínimo</span>' : ''}</td>
                 <td><span class="pill">${escapeHtml(frotaCategoriaLabel(f.categoria))}</span></td>
-                <td class="num mono">${f.quantidade} ${escapeHtml(f.unidade || 'un')}</td>
+                <td class="num mono">${escapeHtml(fmtQtd(f.quantidade, f.unidade))}</td>
                 <td class="num mono">${f.minimo == null ? '—' : f.minimo}</td>
                 <td>${fmtDateTime(f.updated_at || f.created_at)}</td>
                 <td><div class="row-actions">
-                  <button class="btn btn-mini btn-primary" data-entrada="${f.id}">+ Entrada</button>
-                  <button class="btn btn-mini btn-ghost" data-saida="${f.id}">− Saída</button>
-                  <button class="btn btn-mini btn-ghost" data-editar="${f.id}">Editar</button>
-                  ${isAdmin() ? `<button class="btn btn-mini btn-ghost" data-excluir="${f.id}" title="Excluir item de frota">🗑</button>` : ''}
+                  <button class="btn btn-mini btn-primary" data-entrada="${f.id}" data-req="frota:criar">+ Entrada</button>
+                  <button class="btn btn-mini btn-saida" data-saida="${f.id}" data-req="frota:criar">− Saída</button>
+                  <button class="btn btn-mini btn-ghost" data-editar="${f.id}" data-req="frota:editar">Editar</button>
+                  <button class="btn btn-mini btn-ghost" data-excluir="${f.id}" data-req="frota:excluir" title="Excluir item de frota">🗑</button>
                 </div></td>
               </tr>`).join('')}</tbody></table></div>`;
       const porId = (idStr) => itens.find((f) => String(f.id) === idStr);
@@ -2349,7 +2428,7 @@
         <input id="fa-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234 · fornecedor' : 'Ex.: troca preventiva; furo; revisão dos 50 mil km'}"></div>
       <div class="form-actions">
         <button class="btn btn-ghost" id="fa-cancelar">Cancelar</button>
-        <button class="btn btn-primary" id="fa-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
+        <button class="btn ${sinal > 0 ? 'btn-primary' : 'btn-saida'}" id="fa-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
       </div>`;
     setTimeout(() => { const c = $('fa-qtd'); if (c) { c.focus(); c.select(); } }, 50);
     $('fa-cancelar').onclick = closeDrawer;
@@ -2374,86 +2453,142 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Materiais ▸ Painel administrativo (somente administradores): visão geral do
-  // estoque de materiais e de frota, reposição pendente, frota por categoria e
-  // as movimentações de estoque (entradas, saídas, cadastros e exclusões).
+  // Painéis administrativos — Materiais ▸ Painel e Frota ▸ Painel, um para cada
+  // estoque. O período escolhido no topo vale para os cartões, os resumos e a
+  // lista de movimentações. Os dados vêm de /api/movimentos (a auditoria, com
+  // quantidade, unidade, estoque, placa e motivo de cada lançamento).
   // ---------------------------------------------------------------------------
-  async function renderMateriaisPainel() {
-    setTopbar('<button class="btn btn-primary" id="pa-export">⬇ Exportar estoque (Excel)</button>');
+  const UNIDADE_CURTA = { un: ['un', 'un'], par: ['par', 'pares'], jogo: ['jogo', 'jogos'], L: ['L', 'L'], kg: ['kg', 'kg'], m: ['m', 'm'] };
+  function unidadeCurta(u, q) { const x = UNIDADE_CURTA[u]; return x ? x[Math.abs(q) === 1 ? 0 : 1] : (u || 'un'); }
+  const fmtQtd = (q, u) => `${q} ${unidadeCurta(u || 'un', q)}`;
+  // { un: 12, L: 40 } → "12 un · 40 L"
+  const somaPorUnidade = (mapa) => Object.keys(mapa).filter((u) => mapa[u]).map((u) => fmtQtd(mapa[u], u)).join(' · ');
+  const painelPeriodo = { material: '30', frota: '30' }; // lembra o período entre recargas da tela
+
+  const ESTOQUE = {
+    material: {
+      aba: 'materiais', api: '/api/materiais', rotaLista: '#/materiais', lista: 'a lista de materiais',
+      ajuste: (it, s) => ajusteMaterial(it, s), veiculos: false, arquivo: 'painel-materiais',
+    },
+    frota: {
+      aba: 'frota', api: '/api/frota', rotaLista: '#/frota', lista: 'a lista da frota',
+      ajuste: (it, s) => ajusteFrota(it, s), veiculos: true, arquivo: 'painel-frota',
+    },
+  };
+  const ACAO_MOV = {
+    entrada: { rotulo: 'Entrada', cls: 'ok' }, saida: { rotulo: 'Saída', cls: 'bad' },
+    criar: { rotulo: 'Cadastro', cls: 'na' }, editar: { rotulo: 'Edição', cls: 'na' }, excluir: { rotulo: 'Exclusão', cls: 'warn' },
+  };
+
+  function statCardSub(label, value, sub, cls) {
+    return `<div class="stat ${cls || ''}">
+      <div class="stat-label">${escapeHtml(label)}</div>
+      <div class="stat-value"><span class="mono">${escapeHtml(String(value))}</span></div>
+      ${sub ? `<div class="stat-sub">${escapeHtml(sub)}</div>` : ''}
+    </div>`;
+  }
+  // Entradas/saídas do período: com uma só unidade mostra a quantidade; com
+  // várias (frota: un, L, kg…) mostra os lançamentos e detalha por unidade.
+  function cartaoMovimento(label, rows, cls) {
+    if (!rows.length) return statCardSub(label, 0, 'nenhum lançamento');
+    const mapa = {};
+    rows.forEach((r) => { const u = r.unidade || 'un'; mapa[u] = (mapa[u] || 0) + Math.abs(r.qtd || 0); });
+    const unidades = Object.keys(mapa);
+    const lanc = `${rows.length} lançamento${rows.length === 1 ? '' : 's'}`;
+    if (unidades.length === 1) return statCardSub(label, fmtQtd(mapa[unidades[0]], unidades[0]), 'em ' + lanc, cls);
+    return statCardSub(label, lanc, somaPorUnidade(mapa), cls);
+  }
+  function qtdMovHtml(r) {
+    if (r.qtd == null || r.qtd === 0) return '<span class="muted">—</span>';
+    if (r.action === 'criar') return `<span class="mov-q">+${escapeHtml(fmtQtd(r.qtd, r.unidade))}</span><div class="cell-sub">estoque inicial</div>`;
+    return r.qtd > 0
+      ? `<span class="mov-q in">+${escapeHtml(fmtQtd(r.qtd, r.unidade))}</span>`
+      : `<span class="mov-q out">−${escapeHtml(fmtQtd(-r.qtd, r.unidade))}</span>`;
+  }
+  const textoMov = (r) => r.motivo
+    || ((r.action === 'entrada' || r.action === 'saida') && r.qtd != null ? '' : (r.detalhes || ''));
+
+  async function renderPainelEstoque(tipo) {
+    const cfg = ESTOQUE[tipo];
+    setTopbar('<button class="btn btn-primary" id="pa-export">⬇ Exportar (Excel)</button>');
     view().innerHTML = '<div class="empty">Carregando…</div>';
-    const [materiais, frota, auditoria] = await Promise.all([
-      api('/api/materiais'), api('/api/frota'), api('/api/audit?entity=material,frota&limit=500'),
-    ]);
-    const movs = auditoria.rows || [];
-    const dias = (n) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - n); return d; };
+    const [itens, mov] = await Promise.all([api(cfg.api), api('/api/movimentos?tipo=' + tipo + '&limit=5000')]);
+    const movs = mov.rows || [];
+    const porId = {};
+    itens.forEach((it) => { porId[it.id] = it; });
+    const abaixo = (it) => it.minimo != null && it.quantidade <= it.minimo;
+    const unDe = (it) => (tipo === 'frota' ? (it.unidade || 'un') : 'un');
     const tsDate = (ts) => {
       const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(ts || '');
       return m ? new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) : null;
     };
-    const ult30 = movs.filter((r) => (r.action === 'entrada' || r.action === 'saida') && (tsDate(r.ts) || 0) >= dias(30));
-    const entradas30 = ult30.filter((r) => r.action === 'entrada').length;
-    const saidas30 = ult30.filter((r) => r.action === 'saida').length;
-    const unidadesTotal = materiais.reduce((s, m) => s + (m.quantidade || 0), 0) + frota.reduce((s, f) => s + (f.quantidade || 0), 0);
+    const isoDia = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const inicioPeriodo = (p) => {
+      if (!p) return null;
+      const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - parseInt(p, 10) + 1);
+      return d;
+    };
 
-    // Itens no estoque mínimo ou abaixo dele (materiais e frota juntos), com a
-    // maior falta primeiro.
-    const reposicao = [
-      ...materiais.filter((m) => m.minimo != null && m.quantidade <= m.minimo)
-        .map((m) => ({ tipo: 'Material', nome: m.nome, qtd: m.quantidade, un: 'un', minimo: m.minimo, extra: '', abrir: () => ajusteMaterial(m, +1) })),
-      ...frota.filter(frotaAbaixo)
-        .map((f) => ({ tipo: 'Frota', nome: f.nome, qtd: f.quantidade, un: f.unidade, minimo: f.minimo, extra: frotaCategoriaLabel(f.categoria), abrir: () => ajusteFrota(f, +1) })),
-    ].sort((a, b) => (b.minimo - b.qtd) - (a.minimo - a.qtd));
-
-    const porCat = {};
-    for (const f of frota) {
-      const c = porCat[f.categoria] || (porCat[f.categoria] = { label: frotaCategoriaLabel(f.categoria), itens: 0, unidades: 0, baixos: 0 });
-      c.itens += 1; c.unidades += f.quantidade || 0; if (frotaAbaixo(f)) c.baixos += 1;
-    }
-    const cats = Object.values(porCat).sort((a, b) => b.itens - a.itens);
-
-    view().innerHTML = `
-      <div class="cards cards-compact">
-        ${statCard('Materiais cadastrados', materiais.length)}
-        ${statCard('Itens de frota', frota.length)}
-        ${statCard('Unidades em estoque', unidadesTotal, 'is-accent')}
-        ${statCard('Precisam de reposição', reposicao.length, reposicao.length ? 'is-warn' : '')}
-        ${statCard('Entradas · 30 dias', entradas30)}
-        ${statCard('Saídas · 30 dias', saidas30)}
-      </div>
-      <div class="pa-grid">
-        <div class="panel panel-pad">
-          <div class="section-title">Reposição necessária</div>
-          ${!reposicao.length ? '<div class="empty">Nenhum item no estoque mínimo ou abaixo dele.</div>' : `<div class="table-wrap"><table>
-            <thead><tr><th>Item</th><th class="num">Em estoque</th><th class="num">Mínimo</th><th class="num">Faltam</th><th></th></tr></thead>
-            <tbody>${reposicao.map((r, i) => `<tr>
-              <td><div class="cell-title">${escapeHtml(r.nome)}</div>
-                  <div class="cell-sub">${escapeHtml(r.tipo)}${r.extra ? ' · ' + escapeHtml(r.extra) : ''}</div></td>
-              <td class="num mono">${r.qtd} ${escapeHtml(r.un)}</td>
-              <td class="num mono">${r.minimo}</td>
-              <td class="num"><span class="s5-chip warn">${r.minimo - r.qtd > 0 ? r.minimo - r.qtd : 'no limite'}</span></td>
-              <td><div class="row-actions"><button class="btn btn-mini btn-primary" data-rep="${i}">+ Entrada</button></div></td>
-            </tr>`).join('')}</tbody></table></div>`}
-        </div>
-        <div class="panel panel-pad">
-          <div class="section-title">Frota por categoria</div>
-          ${!cats.length ? '<div class="empty">Nenhum item de frota cadastrado ainda. Cadastre em <a href="#/materiais/frota">Materiais ▸ Frota</a>.</div>' : `<div class="table-wrap"><table>
-            <thead><tr><th>Categoria</th><th class="num">Itens</th><th class="num">Unidades</th><th class="num">Abaixo do mínimo</th></tr></thead>
+    // Reposição e categorias olham o estoque de agora (não dependem do período).
+    const reposicao = itens.filter(abaixo).sort((a, b) => (b.minimo - b.quantidade) - (a.minimo - a.quantidade));
+    const reposicaoHtml = !reposicao.length
+      ? '<div class="empty">Nenhum item no estoque mínimo ou abaixo dele.</div>'
+      : `<div class="table-wrap"><table>
+          <thead><tr><th>Item</th><th class="num">Em estoque</th><th class="num">Mínimo</th><th class="num">Faltam</th><th></th></tr></thead>
+          <tbody>${reposicao.map((it) => `<tr>
+            <td><div class="cell-title">${escapeHtml(it.nome)}</div>
+                ${tipo === 'frota' ? `<div class="cell-sub">${escapeHtml(frotaCategoriaLabel(it.categoria))}</div>` : ''}</td>
+            <td class="num mono">${escapeHtml(fmtQtd(it.quantidade, unDe(it)))}</td>
+            <td class="num mono">${it.minimo}</td>
+            <td class="num"><span class="s5-chip warn">${it.minimo - it.quantidade > 0 ? it.minimo - it.quantidade : 'no limite'}</span></td>
+            <td><div class="row-actions"><button class="btn btn-mini btn-primary" data-rep="${it.id}" data-req="${cfg.aba}:criar">+ Entrada</button></div></td>
+          </tr>`).join('')}</tbody></table></div>`;
+    let catHtml = '';
+    if (tipo === 'frota') {
+      const porCat = {};
+      for (const f of itens) {
+        const c = porCat[f.categoria] || (porCat[f.categoria] = { label: frotaCategoriaLabel(f.categoria), itens: 0, baixos: 0 });
+        c.itens += 1; if (abaixo(f)) c.baixos += 1;
+      }
+      const cats = Object.values(porCat).sort((a, b) => b.itens - a.itens);
+      catHtml = !cats.length
+        ? `<div class="empty">Nenhum item de frota cadastrado ainda. Cadastre em <a href="#/frota">Frota</a>.</div>`
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Categoria</th><th class="num">Itens</th><th class="num">Abaixo do mínimo</th></tr></thead>
             <tbody>${cats.map((c) => `<tr>
               <td>${escapeHtml(c.label)}</td>
               <td class="num mono">${c.itens}</td>
-              <td class="num mono">${c.unidades}</td>
               <td class="num">${c.baixos ? `<span class="s5-chip warn">${c.baixos}</span>` : '<span class="muted">—</span>'}</td>
-            </tr>`).join('')}</tbody></table></div>`}
-        </div>
-      </div>
-      <div class="section-title">Movimentações de estoque</div>
-      <div class="toolbar">
-        <div class="search"><input id="pa-q" placeholder="Buscar por item, operador ou detalhe…"></div>
-        <select class="filter" id="pa-tipo">
-          <option value="">Materiais e frota</option>
-          <option value="material">Só materiais</option>
-          <option value="frota">Só frota</option>
+            </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    view().innerHTML = `
+      <div class="toolbar pa-toolbar">
+        <label class="pa-periodo-rot" for="pa-periodo">Período</label>
+        <select class="filter" id="pa-periodo">
+          <option value="7">Últimos 7 dias</option>
+          <option value="30">Últimos 30 dias</option>
+          <option value="90">Últimos 90 dias</option>
+          <option value="365">Últimos 12 meses</option>
+          <option value="">Todo o histórico</option>
         </select>
+        <span class="muted" id="pa-periodo-txt"></span>
+        <a class="pa-link" href="${cfg.rotaLista}">Abrir ${cfg.lista} →</a>
+      </div>
+      <div class="cards cards-compact" id="pa-cards"></div>
+      <div class="pa-grid${tipo === 'frota' ? '' : ' pa-grid-um'}">
+        <div class="panel panel-pad">
+          <div class="section-title">Reposição necessária</div>
+          ${reposicaoHtml}
+        </div>
+        ${tipo === 'frota' ? `<div class="panel panel-pad"><div class="section-title">Frota por categoria</div>${catHtml}</div>` : ''}
+      </div>
+      ${cfg.veiculos ? '<div class="section-title">Consumo por veículo</div><div class="panel" id="pa-veiculos"></div>' : ''}
+      <div class="section-title">Entradas e saídas por item</div>
+      <div class="panel" id="pa-itens"></div>
+      <div class="section-title">Movimentações</div>
+      <div class="toolbar">
+        <div class="search"><input id="pa-q" placeholder="Buscar por item, operador${cfg.veiculos ? ', placa' : ''} ou motivo…"></div>
         <select class="filter" id="pa-acao">
           <option value="">Todas as ações</option>
           <option value="entrada">Entradas</option>
@@ -2462,64 +2597,156 @@
           <option value="editar">Edições</option>
           <option value="excluir">Exclusões</option>
         </select>
-        <select class="filter" id="pa-periodo">
-          <option value="7">Últimos 7 dias</option>
-          <option value="30" selected>Últimos 30 dias</option>
-          <option value="90">Últimos 90 dias</option>
-          <option value="">Tudo (até 500 registros)</option>
-        </select>
       </div>
       <div class="panel"><div id="pa-rows"></div></div>`;
 
-    view().querySelectorAll('[data-rep]').forEach((b) => { b.onclick = () => reposicao[+b.dataset.rep].abrir(); });
+    view().querySelectorAll('[data-rep]').forEach((b) => {
+      b.onclick = () => { const it = porId[b.dataset.rep]; if (it) cfg.ajuste(it, +1); };
+    });
 
-    let filtradas = movs;
+    let noPeriodo = [];
+    let porItem = [];
+    let veiculos = [];
+    let filtradas = [];
+
     const drawMovs = () => {
       const term = ($('pa-q').value || '').toLowerCase();
-      const tipo = $('pa-tipo').value, acao = $('pa-acao').value, per = $('pa-periodo').value;
-      const desde = per ? dias(parseInt(per, 10)) : null;
+      const acao = $('pa-acao').value;
       const hit = (v) => v != null && String(v).toLowerCase().includes(term);
-      filtradas = movs.filter((r) => (!tipo || r.entity_type === tipo) && (!acao || r.action === acao)
-        && (!desde || (tsDate(r.ts) || 0) >= desde)
-        && (!term || hit(r.entity_label) || hit(r.actor) || hit(r.details)));
+      filtradas = noPeriodo.filter((r) => (!acao || r.action === acao)
+        && (!term || hit(r.item) || hit(r.actor) || hit(r.placa) || hit(r.motivo) || hit(r.detalhes)));
       $('pa-rows').innerHTML = !filtradas.length
         ? '<div class="empty">Nenhuma movimentação para este filtro.</div>'
-        : `<div class="table-wrap"><table>
-            <thead><tr><th>Quando</th><th>Operador</th><th>Ação</th><th>Tipo</th><th>Item</th><th>Detalhes</th></tr></thead>
-            <tbody>${filtradas.map((r) => `<tr>
-              <td class="nowrap">${fmtDateTime(r.ts)}</td>
-              <td>${escapeHtml(r.actor)}</td>
-              <td>${escapeHtml(auditActionLabel(r.action))}</td>
-              <td>${escapeHtml(ENTITY_LABELS[r.entity_type] || r.entity_type || '—')}</td>
-              <td>${escapeHtml(r.entity_label || '—')}</td>
-              <td class="muted">${escapeHtml(auditDetails(r.details))}</td>
-            </tr>`).join('')}</tbody></table></div>`;
+        : `<div class="table-wrap"><table class="mov-table">
+            <thead><tr><th>Quando</th><th>Operador</th><th>Ação</th><th>Item</th><th class="num">Unidades</th><th class="num">Estoque após</th>${cfg.veiculos ? '<th>Veículo</th>' : ''}<th>Motivo / detalhes</th></tr></thead>
+            <tbody>${filtradas.map((r) => {
+              const a = ACAO_MOV[r.action] || { rotulo: r.action, cls: 'na' };
+              const txt = textoMov(r);
+              return `<tr>
+                <td class="nowrap">${fmtDateTime(r.ts)}</td>
+                <td>${escapeHtml(r.actor)}</td>
+                <td><span class="s5-chip ${a.cls}">${escapeHtml(a.rotulo)}</span></td>
+                <td><div class="cell-title">${escapeHtml(r.item || '—')}</div></td>
+                <td class="num">${qtdMovHtml(r)}</td>
+                <td class="num mono">${r.estoque == null ? '<span class="muted">—</span>' : escapeHtml(fmtQtd(r.estoque, r.unidade))}</td>
+                ${cfg.veiculos ? `<td>${r.placa ? `<span class="placa">${escapeHtml(r.placa)}</span>` : '<span class="muted">—</span>'}</td>` : ''}
+                <td class="muted">${txt ? escapeHtml(txt) : '—'}</td>
+              </tr>`;
+            }).join('')}</tbody></table></div>`;
     };
+
+    const drawPeriodo = () => {
+      const p = $('pa-periodo').value;
+      painelPeriodo[tipo] = p;
+      const desde = inicioPeriodo(p);
+      $('pa-periodo-txt').textContent = desde ? `de ${fmtDate(isoDia(desde))} até hoje` : '';
+      noPeriodo = movs.filter((r) => !desde || (tsDate(r.ts) || 0) >= desde);
+      const entradas = noPeriodo.filter((r) => r.action === 'entrada');
+      const saidas = noPeriodo.filter((r) => r.action === 'saida');
+
+      let cards = statCard('Itens cadastrados', itens.length)
+        + statCard('Abaixo do mínimo', reposicao.length, reposicao.length ? 'is-warn' : '')
+        + cartaoMovimento('Entradas no período', entradas, 'is-accent')
+        + cartaoMovimento('Saídas no período', saidas, 'is-saida');
+      if (cfg.veiculos) {
+        const placas = new Set(saidas.filter((r) => r.placa).map((r) => r.placa));
+        cards += statCardSub('Veículos atendidos', placas.size, placas.size ? 'com saída registrada no período' : 'nenhuma placa informada');
+      }
+      $('pa-cards').innerHTML = cards;
+
+      // Entradas e saídas por item (quantidade que entrou e saiu no período)
+      const agg = {};
+      for (const r of noPeriodo) {
+        if ((r.action !== 'entrada' && r.action !== 'saida') || r.qtd == null) continue;
+        const k = r.item_id != null ? 'i' + r.item_id : 'n' + r.item;
+        const a = agg[k] || (agg[k] = { id: r.item_id, nome: r.item, unidade: r.unidade || 'un', entrou: 0, saiu: 0, lanc: 0, ultima: r.ts });
+        if (r.action === 'entrada') a.entrou += Math.abs(r.qtd); else a.saiu += Math.abs(r.qtd);
+        a.lanc += 1;
+      }
+      porItem = Object.values(agg).sort((a, b) => (b.saiu - a.saiu) || (b.entrou - a.entrou));
+      $('pa-itens').innerHTML = !porItem.length
+        ? '<div class="empty">Nenhuma entrada ou saída no período.</div>'
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Item</th><th class="num">Entrou</th><th class="num">Saiu</th><th class="num">Estoque atual</th><th class="num">Lançamentos</th><th>Última movimentação</th></tr></thead>
+            <tbody>${porItem.map((a) => {
+              const atual = porId[a.id];
+              return `<tr>
+                <td><div class="cell-title">${escapeHtml(a.nome || '—')}</div>
+                    ${atual && tipo === 'frota' ? `<div class="cell-sub">${escapeHtml(frotaCategoriaLabel(atual.categoria))}</div>` : ''}
+                    ${atual ? '' : '<div class="cell-sub">item excluído</div>'}</td>
+                <td class="num">${a.entrou ? `<span class="mov-q in">+${escapeHtml(fmtQtd(a.entrou, a.unidade))}</span>` : '<span class="muted">—</span>'}</td>
+                <td class="num">${a.saiu ? `<span class="mov-q out">−${escapeHtml(fmtQtd(a.saiu, a.unidade))}</span>` : '<span class="muted">—</span>'}</td>
+                <td class="num mono">${atual ? escapeHtml(fmtQtd(atual.quantidade, unDe(atual))) : '<span class="muted">—</span>'}</td>
+                <td class="num mono">${a.lanc}</td>
+                <td class="nowrap">${fmtDateTime(a.ultima)}</td>
+              </tr>`;
+            }).join('')}</tbody></table></div>`;
+
+      // Consumo por veículo (só frota): o que saiu para cada placa no período
+      if (cfg.veiculos) {
+        const pv = {};
+        let semPlaca = 0;
+        for (const r of saidas) {
+          if (!r.placa) { semPlaca += 1; continue; }
+          const v = pv[r.placa] || (pv[r.placa] = { placa: r.placa, lanc: 0, itens: {}, ultima: r.ts });
+          v.lanc += 1;
+          const it = v.itens[r.item] || (v.itens[r.item] = { qtd: 0, unidade: r.unidade || 'un' });
+          it.qtd += Math.abs(r.qtd || 0);
+        }
+        veiculos = Object.values(pv).sort((a, b) => b.lanc - a.lanc);
+        $('pa-veiculos').innerHTML = (!veiculos.length
+          ? '<div class="empty">Nenhuma saída com placa informada no período.</div>'
+          : `<div class="table-wrap"><table>
+              <thead><tr><th>Veículo</th><th>Itens aplicados</th><th class="num">Lançamentos</th><th>Última saída</th></tr></thead>
+              <tbody>${veiculos.map((v) => `<tr>
+                <td><span class="placa">${escapeHtml(v.placa)}</span></td>
+                <td>${Object.keys(v.itens).map((nome) => `<span class="mov-q out">${escapeHtml(fmtQtd(v.itens[nome].qtd, v.itens[nome].unidade))}</span> ${escapeHtml(nome)}`).join('<br>')}</td>
+                <td class="num mono">${v.lanc}</td>
+                <td class="nowrap">${fmtDateTime(v.ultima)}</td>
+              </tr>`).join('')}</tbody></table></div>`)
+          + (semPlaca ? `<div class="pa-nota">${semPlaca} saída${semPlaca === 1 ? '' : 's'} no período sem placa informada.</div>` : '');
+      }
+      drawMovs();
+    };
+
+    $('pa-periodo').value = painelPeriodo[tipo];
+    $('pa-periodo').onchange = drawPeriodo;
     let deb;
     $('pa-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(drawMovs, 200); });
-    ['pa-tipo', 'pa-acao', 'pa-periodo'].forEach((id) => $(id).addEventListener('change', drawMovs));
-    drawMovs();
+    $('pa-acao').addEventListener('change', drawMovs);
+    drawPeriodo();
 
-    $('pa-export').onclick = () => exportEstoqueExcel(materiais, frota, filtradas);
+    // Planilha do painel: estoque atual, resumo por item, consumo por veículo
+    // (frota) e as movimentações filtradas na tela.
+    $('pa-export').onclick = () => {
+      if (typeof XLSX === 'undefined') { toast('Biblioteca de planilha indisponível.', 'err'); return; }
+      try {
+        const wb = XLSX.utils.book_new();
+        const add = (name, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
+        if (tipo === 'frota') add('Frota', frotaRowsXlsx(itens));
+        else {
+          const l = [['Material', 'Em estoque', 'Estoque mínimo', 'Abaixo do mínimo', 'Atualizado em']];
+          itens.forEach((m) => l.push([m.nome || '', m.quantidade == null ? '' : m.quantidade, m.minimo == null ? '' : m.minimo, abaixo(m) ? 'Sim' : 'Não', m.updated_at || m.created_at || '']));
+          add('Materiais', l);
+        }
+        const pi = [['Item', 'Unidade', 'Entrou', 'Saiu', 'Estoque atual', 'Lançamentos', 'Última movimentação']];
+        porItem.forEach((a) => { const at = porId[a.id]; pi.push([a.nome || '', a.unidade, a.entrou, a.saiu, at ? at.quantidade : '', a.lanc, a.ultima || '']); });
+        add('Entradas e saídas', pi);
+        if (cfg.veiculos) {
+          const pv = [['Veículo', 'Item', 'Quantidade', 'Unidade', 'Lançamentos do veículo', 'Última saída']];
+          veiculos.forEach((v) => Object.keys(v.itens).forEach((nome) => pv.push([v.placa, nome, v.itens[nome].qtd, v.itens[nome].unidade, v.lanc, v.ultima || ''])));
+          add('Consumo por veículo', pv);
+        }
+        const lm = [['Quando', 'Operador', 'Ação', 'Item', 'Quantidade', 'Unidade', 'Estoque após', 'Veículo', 'Motivo / detalhes']];
+        filtradas.forEach((r) => lm.push([r.ts || '', r.actor || '', (ACAO_MOV[r.action] || {}).rotulo || r.action, r.item || '',
+          r.qtd == null ? '' : r.qtd, r.unidade || '', r.estoque == null ? '' : r.estoque, r.placa || '', textoMov(r)]));
+        add('Movimentações', lm);
+        XLSX.writeFile(wb, `${cfg.arquivo}-${todayStr()}.xlsx`);
+        toast('Planilha do painel baixada.');
+      } catch (e) { toast('Falha ao exportar: ' + e.message, 'err'); }
+    };
   }
 
-  // Planilha só do estoque: materiais, frota e as movimentações filtradas no painel.
-  function exportEstoqueExcel(materiais, frota, movs) {
-    if (typeof XLSX === 'undefined') { toast('Biblioteca de planilha indisponível.', 'err'); return; }
-    try {
-      const wb = XLSX.utils.book_new();
-      const add = (name, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name);
-      const linhasMat = [['Material', 'Em estoque', 'Estoque mínimo', 'Abaixo do mínimo', 'Atualizado em']];
-      materiais.forEach((m) => linhasMat.push([m.nome || '', m.quantidade == null ? '' : m.quantidade, m.minimo == null ? '' : m.minimo, m.minimo != null && m.quantidade <= m.minimo ? 'Sim' : 'Não', m.updated_at || m.created_at || '']));
-      add('Materiais', linhasMat);
-      add('Frota', frotaRowsXlsx(frota));
-      const linhasMov = [['Quando', 'Operador', 'Ação', 'Tipo', 'Item', 'Detalhes']];
-      movs.forEach((r) => linhasMov.push([r.ts || '', r.actor || '', auditActionLabel(r.action), ENTITY_LABELS[r.entity_type] || r.entity_type || '', r.entity_label || '', auditDetails(r.details)]));
-      add('Movimentações', linhasMov);
-      XLSX.writeFile(wb, `estoque-materiais-frota-${todayStr()}.xlsx`);
-      toast('Planilha do estoque baixada.');
-    } catch (e) { toast('Falha ao exportar: ' + e.message, 'err'); }
-  }
   // Linhas da aba "Frota" (usada no backup completo e na planilha do estoque).
   function frotaRowsXlsx(frota) {
     const rows = [['Item', 'Categoria', 'Unidade', 'Em estoque', 'Estoque mínimo', 'Marca / modelo', 'Aplicação', 'Observações', 'Atualizado em']];
@@ -2611,7 +2838,7 @@
   }
 
   async function renderEpis() {
-    setTopbar('<button class="btn btn-primary" id="epi-new">+ Nova entrega</button>');
+    setTopbar('<button class="btn btn-primary" id="epi-new" data-req="epis:criar">+ Nova entrega</button>');
     if (epiBasePublica === null) {
       try { epiBasePublica = String((((await api('/api/epi/link-base')) || {}).base) || ''); }
       catch (_) { epiBasePublica = ''; }
@@ -2649,7 +2876,7 @@
                 <td><div class="row-actions">
                   ${e.status === 'pendente' ? `
                     <button class="btn btn-mini btn-ghost" data-pdf="${e.id}">Baixar PDF</button>
-                    <button class="btn btn-mini btn-ghost" data-anexar="${e.id}">Anexar assinado</button>` : ''}
+                    <button class="btn btn-mini btn-ghost" data-anexar="${e.id}" data-req="epis:criar">Anexar assinado</button>` : ''}
                   <button class="btn btn-mini btn-primary" data-termo="${e.id}">Ver termo</button>
                 </div></td>
               </tr>`).join('')}</tbody></table></div>`;
@@ -2782,7 +3009,7 @@
           <div class="form-actions">
             <button class="btn btn-primary" id="epi-link2">Copiar link de assinatura</button>
             <button class="btn btn-ghost" id="epi-pdf2">Baixar termo em PDF</button>
-            <button class="btn btn-ghost" id="epi-anexar2">Anexar PDF assinado…</button>
+            <button class="btn btn-ghost" id="epi-anexar2" data-req="epis:criar">Anexar PDF assinado…</button>
             <button class="btn btn-ghost" id="epi-fechar2">Fechar</button>
           </div>`;
         $('epi-link2').onclick = () => epiCopiarLink(e, $('epi-link-txt'));
@@ -2833,8 +3060,8 @@
         ${e.status === 'pendente' ? `
           <button class="btn btn-primary" id="epi-link3">Copiar link de assinatura</button>
           <button class="btn btn-ghost" id="epi-pdf3">Baixar termo em PDF</button>
-          <button class="btn btn-ghost" id="epi-anexar3">Anexar PDF assinado…</button>
-          ${isAdmin() ? '<button class="btn btn-ghost" id="epi-cancelar3">Cancelar entrega</button>' : ''}` : ''}
+          <button class="btn btn-ghost" id="epi-anexar3" data-req="epis:criar">Anexar PDF assinado…</button>
+          <button class="btn btn-ghost" id="epi-cancelar3" data-req="epis:excluir">Cancelar entrega</button>` : ''}
         <button class="btn btn-ghost" id="epi-fechar3">Fechar</button>
       </div>`;
     $('epi-fechar3').onclick = closeDrawer;
@@ -2869,7 +3096,7 @@
   }
 
   async function renderHomeOffice() {
-    setTopbar('<button class="btn btn-primary" id="ho-new">+ Registrar saída</button>');
+    setTopbar('<button class="btn btn-primary" id="ho-new" data-req="homeoffice:criar">+ Registrar saída</button>');
     let hoFilter = 'ativo';
     view().innerHTML = `
       <div class="toolbar">
@@ -2919,9 +3146,9 @@
             ${h.return_notes ? `<div><span class="muted">Obs. devolução:</span> ${escapeHtml(h.return_notes)}</div>` : ''}
           </div>
           <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
-            ${out ? `<button class="btn btn-primary btn-sm" data-devolver="${h.id}">Registrar devolução</button>` : ''}
+            ${out ? `<button class="btn btn-primary btn-sm" data-devolver="${h.id}" data-req="homeoffice:criar">Registrar devolução</button>` : ''}
             <button class="btn btn-ghost btn-sm" data-ver="${h.asset_id}">Ver item</button>
-            <button class="btn btn-ghost btn-sm" data-del="${h.id}">Excluir registro</button>
+            <button class="btn btn-ghost btn-sm" data-del="${h.id}" data-req="homeoffice:excluir">Excluir registro</button>
           </div>
         </div>
       </div>`;
@@ -3184,8 +3411,8 @@
             ? `<span class="inv-meta">${escapeHtml(it.inv_by || '—')}${it.inv_at ? ' · ' + fmtDateTime(it.inv_at) : ''}</span>`
             : '<span class="muted">pendente</span>'}</td>
           <td><div class="row-actions">${it.conferido
-            ? `<button class="btn btn-ghost btn-sm" data-uncheck="${it.id}">Desfazer</button>`
-            : `<button class="btn btn-sm btn-conf" data-check="${it.id}">Conferir</button>`}</div></td>
+            ? `<button class="btn btn-ghost btn-sm" data-uncheck="${it.id}" data-req="inventario:editar">Desfazer</button>`
+            : `<button class="btn btn-sm btn-conf" data-check="${it.id}" data-req="inventario:criar">Conferir</button>`}</div></td>
         </tr>`).join('')}</tbody></table></div>`;
   }
 
@@ -3194,10 +3421,10 @@
     view().innerHTML = `
       <div class="inv-head panel panel-pad">
         <div id="inv-progress" class="inv-progress"></div>
-        <button class="btn btn-ghost btn-sm" id="inv-reset">Reiniciar inventário</button>
+        <button class="btn btn-ghost btn-sm" id="inv-reset" data-req="inventario:excluir">Reiniciar inventário</button>
       </div>
 
-      <div class="scan-card inv-scan">
+      <div class="scan-card inv-scan" data-req="inventario:criar">
         <div class="inv-scan-row">
           <input class="wedge-input" id="inv-wedge" placeholder="Digite o patrimônio e tecle Enter para conferir…" autocomplete="off">
         </div>
@@ -3558,8 +3785,9 @@
       add('Materiais', matRows);
       add('Frota', frotaRowsXlsx(dump.frota_itens));
 
-      const userRows = [['Login', 'Nome', 'Papel', 'Ativo', 'Criado em']];
-      (dump.users || []).forEach((u) => userRows.push([u.login, u.name, u.role === 'admin' ? 'Administrador' : 'Operador', u.active === false ? 'Não' : 'Sim', u.created_at || '']));
+      const userRows = [['Login', 'Nome', 'Papel', 'Ativo', 'Criado em', 'Bloqueio de alteração', 'Acessos por aba']];
+      (dump.users || []).forEach((u) => userRows.push([u.login, u.name, u.role === 'admin' ? 'Administrador' : 'Operador',
+        u.active === false ? 'Não' : 'Sim', u.created_at || '', u.role !== 'admin' && u.bloquear_alteracao ? 'Sim' : 'Não', acessosTexto(u)]));
       add('Operadores', userRows);
 
       const auRows = [['Quando', 'Operador', 'Ação', 'Tipo', 'Item', 'Detalhes']];
@@ -3627,20 +3855,21 @@
   // ---------------------------------------------------------------------------
   async function renderConfig() {
     const cfg = state.config;
+    const soLeitura = pode('config', 'editar') ? '' : ' readonly';
     view().innerHTML = `
       <div class="cfg-grid">
         <div class="panel panel-pad cfg-card">
           <div class="section-title">Empresa</div>
-          <div class="field"><label for="cfg-company">Nome da empresa</label><input id="cfg-company" maxlength="80" value="${escapeHtml(cfg.company)}"></div>
+          <div class="field"><label for="cfg-company">Nome da empresa</label><input id="cfg-company" maxlength="80" value="${escapeHtml(cfg.company)}"${soLeitura}></div>
           <div class="hint">Aparece no topo das etiquetas e do sistema.</div>
-          <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary btn-sm" id="cfg-company-save">Salvar empresa</button></div>
+          <div class="form-actions" data-req="config:editar" style="justify-content:flex-start"><button class="btn btn-primary btn-sm" id="cfg-company-save">Salvar empresa</button></div>
         </div>
 
         <div class="panel panel-pad cfg-card">
           <div class="section-title">Patrimônio · numeração</div>
-          <div class="field"><label for="cfg-prefix">Prefixo do patrimônio</label><input id="cfg-prefix" maxlength="8" value="${escapeHtml(cfg.tagPrefix)}" style="text-transform:uppercase"></div>
+          <div class="field"><label for="cfg-prefix">Prefixo do patrimônio</label><input id="cfg-prefix" maxlength="8" value="${escapeHtml(cfg.tagPrefix)}" style="text-transform:uppercase"${soLeitura}></div>
           <div class="hint">Letras e números, até 8 caracteres. Ex.: <strong>BRA</strong> gera <strong>BRA-000001</strong>, <strong>BRA-000002</strong>… Os itens já cadastrados mantêm o número atual.</div>
-          <div class="form-actions" style="justify-content:flex-start"><button class="btn btn-primary btn-sm" id="cfg-prefix-save">Salvar prefixo</button></div>
+          <div class="form-actions" data-req="config:editar" style="justify-content:flex-start"><button class="btn btn-primary btn-sm" id="cfg-prefix-save">Salvar prefixo</button></div>
         </div>
 
         <div class="panel panel-pad cfg-card cfg-span">
@@ -3648,7 +3877,7 @@
           <p class="cfg-text">Os dados ficam no <strong>servidor</strong> e são <strong>compartilhados por toda a equipe</strong>. O servidor já guarda backups automáticos; ainda assim, baixe uma planilha de tempos em tempos como cópia de segurança externa.</p>
           <div class="cfg-backup-actions">
             <button class="btn btn-primary" id="cfg-export">⬇ Baixar planilha de backup</button>
-            <button class="btn btn-ghost" id="cfg-import">⬆ Restaurar de uma planilha</button>
+            <button class="btn btn-ghost" id="cfg-import" data-req="config:editar">⬆ Restaurar de uma planilha</button>
             <input id="cfg-import-file" type="file" accept=".xlsx" hidden>
           </div>
           <div class="hint">A planilha (Excel) abre normalmente para você consultar os itens. Para <strong>restaurar</strong>, selecione uma planilha gerada aqui. Observação: para alterar dados use o próprio sistema — mudanças feitas direto na planilha não voltam na restauração.</div>
@@ -3675,26 +3904,60 @@
   // ---------------------------------------------------------------------------
   // Operadores (somente administradores)
   // ---------------------------------------------------------------------------
+  const rotuloNivel = (n) => ((state.catalog.niveisAcesso || []).find((x) => x.key === n) || { label: n }).label;
+  function nivelNaAba(aba, n) {
+    let melhor = aba.niveis[0];
+    for (const k of aba.niveis) if (NIVEL_IDX[k] <= NIVEL_IDX[n]) melhor = k;
+    return melhor;
+  }
+  // Texto dos acessos configurados (planilha de backup).
+  function acessosTexto(u) {
+    if (u.role === 'admin') return 'Acesso total';
+    return (state.catalog.abas || []).map((a) => {
+      const salvo = u.perms && u.perms[a.key];
+      return `${a.label}: ${rotuloNivel(a.niveis.indexOf(salvo) >= 0 ? salvo : a.padrao)}`;
+    }).join('; ');
+  }
+  // Resumo para a lista de operadores (usa o acesso efetivo, já com o bloqueio).
+  function resumoAcessosHtml(u) {
+    if (u.role === 'admin') return '<span class="muted">Acesso total</span>';
+    const ac = u.acesso || {};
+    const c = { edita: 0, cadastra: 0, ver: 0, nada: 0 };
+    (state.catalog.abas || []).forEach((a) => {
+      const n = ac[a.key] || 'nenhum';
+      if (n === 'nenhum') c.nada += 1; else if (n === 'ver') c.ver += 1; else if (n === 'criar') c.cadastra += 1; else c.edita += 1;
+    });
+    const partes = [];
+    if (c.edita) partes.push(`${c.edita} edita`);
+    if (c.cadastra) partes.push(`${c.cadastra} só cadastra`);
+    if (c.ver) partes.push(`${c.ver} só visualiza`);
+    if (c.nada) partes.push(`${c.nada} sem acesso`);
+    return `<div class="acc-resumo">${escapeHtml(partes.join(' · '))}</div>`
+      + (u.bloquear_alteracao ? '<span class="pill acc-lock-pill">🔒 Bloqueio de alteração</span>' : '');
+  }
+
   async function renderOperators() {
     setTopbar('<button class="btn btn-primary" id="op-new">+ Novo operador</button>');
     const load = async () => {
       const users = await api('/api/users');
       view().innerHTML = `
         <div class="panel"><div class="table-wrap"><table>
-          <thead><tr><th>Login</th><th>Nome</th><th>Papel</th><th>Situação</th><th>Criado em</th><th></th></tr></thead>
+          <thead><tr><th>Login</th><th>Nome</th><th>Papel</th><th>Acessos</th><th>Situação</th><th>Criado em</th><th></th></tr></thead>
           <tbody>${users.map((u) => `
             <tr>
               <td class="mono">${escapeHtml(u.login)}</td>
               <td>${escapeHtml(u.name)}${state.user && u.id === state.user.id ? ' <span class="muted">(você)</span>' : ''}</td>
               <td>${u.role === 'admin' ? '<span class="pill role-admin">Administrador</span>' : '<span class="pill role-op">Operador</span>'}</td>
+              <td>${resumoAcessosHtml(u)}</td>
               <td>${u.active ? '<span class="muted">Ativo</span>' : '<span class="pill" style="--pc:#9aa0a6">Inativo</span>'}</td>
               <td class="muted nowrap">${fmtDateTime(u.created_at)}</td>
               <td><div class="row-actions">
-                <button class="icon-btn" data-edit="${u.id}" title="Editar">✎</button>
+                <button class="icon-btn" data-edit="${u.id}" title="Editar operador e acessos">✎</button>
                 <button class="icon-btn" data-del="${u.id}" data-name="${escapeHtml(u.name)}" title="Excluir">🗑</button>
               </div></td>
-            </tr>`).join('')}</tbody></table></div></div>`;
-      view().querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => operatorForm(users.find((u) => String(u.id) === b.dataset.edit)); });
+            </tr>`).join('')}</tbody></table></div></div>
+        <div class="hint" style="margin-top:10px">Clique em ✎ para definir o que cada operador pode ver, cadastrar, editar e excluir em cada aba.</div>`;
+      view().querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => operatorForm(users.find((u) => String(u.id) === b.dataset.edit), users); });
       view().querySelectorAll('[data-del]').forEach((b) => {
         b.onclick = async () => {
           const ok = await confirmDialog('Excluir operador', `Excluir o operador “${b.dataset.name}”? Esta ação não pode ser desfeita.`, 'Excluir', true);
@@ -3703,32 +3966,131 @@
           catch (e) { toast(e.message, 'err'); }
         };
       });
+      $('op-new').onclick = () => operatorForm(null, users);
     };
-    $('op-new').onclick = () => operatorForm(null, load);
     await load();
     // disponibiliza o recarregamento para o formulário
     renderOperators._reload = load;
   }
 
-  function operatorForm(u) {
+  function operatorForm(u, lista) {
     const editing = !!u;
-    const body = openDrawer(editing ? 'Editar operador' : 'Novo operador');
+    const body = openDrawer(editing ? 'Editar operador — ' + u.name : 'Novo operador', { largo: true });
+    const abas = state.catalog.abas || [];
+    const COLS = ['nenhum', 'ver', 'criar', 'editar', 'excluir'];
+    const COL_ROT = { nenhum: 'Sem acesso', ver: 'Visualizar', criar: 'Cadastrar', editar: 'Editar', excluir: 'Excluir' };
+    const alta = (c) => (c === 'editar' || c === 'excluir' ? ' acc-alta' : '');
+    const padrao = {};
+    abas.forEach((a) => { padrao[a.key] = a.padrao; });
+    let perms = Object.assign({}, padrao, (u && u.perms) || {});
+    const grupos = [];
+    abas.forEach((a) => {
+      let g = grupos.find((x) => x.nome === a.grupo);
+      if (!g) grupos.push(g = { nome: a.grupo, abas: [] });
+      g.abas.push(a);
+    });
+    const outros = (lista || []).filter((x) => x.role !== 'admin' && (!u || x.id !== u.id));
     body.innerHTML = `
-      <div class="field"><label for="u-login">Login</label><input id="u-login" autocapitalize="none" spellcheck="false" value="${escapeHtml(editing ? u.login : '')}" placeholder="ex.: joao.silva"></div>
-      <div class="field"><label for="u-name">Nome</label><input id="u-name" value="${escapeHtml(editing ? u.name : '')}" placeholder="Nome completo"></div>
-      <div class="field"><label for="u-pass">Senha</label><input id="u-pass" type="password" autocomplete="new-password" placeholder="${editing ? 'deixe em branco para manter a atual' : 'mínimo 4 caracteres'}"></div>
       <div class="field-row">
+        <div class="field"><label for="u-login">Login</label><input id="u-login" autocapitalize="none" spellcheck="false" value="${escapeHtml(editing ? u.login : '')}" placeholder="ex.: joao.silva"></div>
+        <div class="field"><label for="u-name">Nome</label><input id="u-name" value="${escapeHtml(editing ? u.name : '')}" placeholder="Nome completo"></div>
+      </div>
+      <div class="field-row tres">
+        <div class="field"><label for="u-pass">Senha</label><input id="u-pass" type="password" autocomplete="new-password" placeholder="${editing ? 'deixe em branco para manter' : 'mínimo 4 caracteres'}"></div>
         <div class="field"><label for="u-role">Papel</label><select id="u-role"><option value="operador"${editing && u.role !== 'admin' ? ' selected' : ''}>Operador</option><option value="admin"${editing && u.role === 'admin' ? ' selected' : ''}>Administrador</option></select></div>
         <div class="field"><label for="u-active">Situação</label><select id="u-active"><option value="1"${!editing || u.active ? ' selected' : ''}>Ativo</option><option value="0"${editing && !u.active ? ' selected' : ''}>Inativo</option></select></div>
       </div>
-      <div class="hint">Administradores gerenciam operadores e configurações. Operadores acessam o restante do sistema. Toda alteração fica registrada na Auditoria com o operador, data e hora.</div>
+
+      <div class="acc-bloco">
+        <div class="section-title">Acessos por aba</div>
+        <div class="acc-admin" id="acc-admin" hidden>Administradores têm acesso total a todas as abas, inclusive Operadores e Configurações. Para limitar o que alguém pode fazer, escolha o papel “Operador”.</div>
+        <div id="acc-op">
+          <label class="acc-lock" id="acc-lock-box">
+            <input type="checkbox" id="u-lock"${editing && u.bloquear_alteracao ? ' checked' : ''}>
+            <div><strong>Bloquear alteração de itens existentes</strong>
+              <span>O operador continua cadastrando itens novos e dando entrada e saída, mas não altera nem exclui o que já está cadastrado. Vale para todas as abas.</span></div>
+          </label>
+          <div class="acc-tools">
+            <span>Aplicar em todas:</span>
+            <button type="button" class="btn btn-mini btn-ghost" data-preset="padrao">Padrão</button>
+            <button type="button" class="btn btn-mini btn-ghost" data-preset="ver">Só visualizar</button>
+            <button type="button" class="btn btn-mini btn-ghost" data-preset="total">Tudo liberado</button>
+            <button type="button" class="btn btn-mini btn-ghost" data-preset="nenhum">Nenhum acesso</button>
+            ${outros.length ? `<select class="filter" id="u-copiar"><option value="">Copiar de outro operador…</option>${outros.map((x) => `<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}</select>` : ''}
+          </div>
+          <div class="table-wrap"><table class="acc-table" id="acc-table">
+            <thead><tr><th>Aba</th>${COLS.map((c) => `<th class="acc-col${alta(c)}"><button type="button" data-col="${c}" title="Aplicar “${escapeHtml(COL_ROT[c])}” em todas as abas">${escapeHtml(COL_ROT[c])}</button></th>`).join('')}</tr></thead>
+            <tbody>${grupos.map((g) => `<tr class="acc-grupo"><td colspan="${COLS.length + 1}">${escapeHtml(g.nome)}</td></tr>` + g.abas.map((a) => `
+              <tr data-aba="${a.key}">
+                <td><div class="cell-title">${escapeHtml(a.label)}</div><div class="acc-ajuda" id="acc-aj-${a.key}"></div></td>
+                ${COLS.map((c) => (a.niveis.indexOf(c) >= 0
+                  ? `<td class="acc-cel${alta(c)}"><input type="radio" name="acc-${a.key}" value="${c}" aria-label="${escapeHtml(a.label + ': ' + rotuloNivel(c))}"></td>`
+                  : '<td class="acc-cel acc-na" title="Não se aplica a esta aba">—</td>')).join('')}
+              </tr>`).join('')).join('')}</tbody>
+          </table></div>
+          <div class="hint">Cadastrar = cadastrar itens novos e dar entrada e saída. Editar = também alterar o que já existe. Excluir = também excluir. As abas sem acesso somem do menu do operador. Clique no nome de uma coluna para aplicar em todas as abas.</div>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button class="btn btn-ghost" id="u-cancel">Cancelar</button>
         <button class="btn btn-primary" id="u-save">${editing ? 'Salvar' : 'Cadastrar operador'}</button>
       </div>`;
+
+    const pintar = () => {
+      const lock = $('u-lock').checked;
+      $('acc-table').classList.toggle('acc-bloqueado', lock);
+      $('acc-lock-box').classList.toggle('on', lock);
+      abas.forEach((a) => {
+        const n = perms[a.key];
+        const r = body.querySelector(`input[name="acc-${a.key}"][value="${n}"]`);
+        if (r) r.checked = true;
+        const ef = lock && NIVEL_IDX[n] > NIVEL_IDX.criar ? nivelNaAba(a, 'criar') : n;
+        const txt = ef === 'nenhum' ? 'A aba some do menu' : ((a.ajuda || {})[ef] || rotuloNivel(ef));
+        const aj = $('acc-aj-' + a.key);
+        aj.textContent = ef !== n ? 'Com o bloqueio: ' + txt : txt;
+        aj.classList.toggle('lock', ef !== n);
+      });
+    };
+    body.querySelectorAll('#acc-table input[type=radio]').forEach((r) => {
+      r.onchange = () => { perms[r.name.slice(4)] = r.value; pintar(); };
+    });
+    body.querySelectorAll('[data-col]').forEach((b) => {
+      b.onclick = () => { abas.forEach((a) => { perms[a.key] = nivelNaAba(a, b.dataset.col); }); pintar(); };
+    });
+    body.querySelectorAll('[data-preset]').forEach((b) => {
+      b.onclick = () => {
+        const p = b.dataset.preset;
+        abas.forEach((a) => {
+          perms[a.key] = p === 'padrao' ? a.padrao : (p === 'total' ? a.niveis[a.niveis.length - 1] : nivelNaAba(a, p));
+        });
+        pintar();
+      };
+    });
+    const cp = $('u-copiar');
+    if (cp) {
+      cp.onchange = () => {
+        const o = outros.find((x) => String(x.id) === cp.value);
+        cp.value = '';
+        if (!o) return;
+        perms = Object.assign({}, padrao, o.perms || {});
+        $('u-lock').checked = !!o.bloquear_alteracao;
+        pintar();
+        toast(`Acessos copiados de ${o.name}. Confira e salve.`);
+      };
+    }
+    $('u-lock').onchange = pintar;
+    const papel = () => { const adm = $('u-role').value === 'admin'; $('acc-admin').hidden = !adm; $('acc-op').hidden = adm; };
+    $('u-role').onchange = papel;
+    papel();
+    pintar();
+
     $('u-cancel').onclick = closeDrawer;
     $('u-save').onclick = async () => {
-      const payload = { login: $('u-login').value.trim().toLowerCase(), name: $('u-name').value.trim(), role: $('u-role').value, active: $('u-active').value === '1' };
+      const payload = {
+        login: $('u-login').value.trim().toLowerCase(), name: $('u-name').value.trim(), role: $('u-role').value, active: $('u-active').value === '1',
+        perms: Object.assign({}, perms), bloquear_alteracao: $('u-lock').checked,
+      };
       const pass = $('u-pass').value;
       if (pass) payload.password = pass;
       if (!payload.login) { toast('Informe o login.', 'err'); return; }
@@ -3757,7 +4119,11 @@
   }
   function clearSession() { try { localStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } }
   function setSession(user) {
-    state.user = { id: user.id, login: user.login, name: user.name, role: user.role };
+    state.user = {
+      id: user.id, login: user.login, name: user.name, role: user.role,
+      acesso: user.acesso || {}, bloquear_alteracao: !!user.bloquear_alteracao,
+    };
+    aplicarPermissoesCss();
     state.operator = user.name;
     try { localStorage.setItem(SESSION_KEY, JSON.stringify({ id: user.id, name: user.name })); } catch { /* ignore */ }
   }
@@ -3845,7 +4211,13 @@
       evtSource.addEventListener('message', (e) => {
         let evt = null;
         try { evt = JSON.parse(e.data); } catch (err) { return; }
-        if (!evt || evt.origin === CLIENT_ID) return; // ignora as próprias mudanças deste operador
+        if (!evt) return;
+        const mexeuEmAcessos = evt.path && (String(evt.path).indexOf('/api/users') === 0 || evt.path === '/api/import');
+        if (mexeuEmAcessos && evt.origin !== CLIENT_ID) {
+          atualizarMeuAcesso().then(() => { if (state.user) onRemoteChange(); });
+          return;
+        }
+        if (evt.origin === CLIENT_ID) return; // ignora as próprias mudanças deste operador
         onRemoteChange();
       });
     } catch (e) { /* ignore */ }
@@ -3867,12 +4239,49 @@
     rerender();
   }
 
+  // Recarrega a sessão quando um administrador muda os acessos (ou desativa o
+  // operador) — o menu e os botões se ajustam sem precisar sair e entrar.
+  async function atualizarMeuAcesso() {
+    if (!state.user) return;
+    const antes = JSON.stringify([state.user.role, state.user.acesso]);
+    let r = null;
+    try { r = await api('/api/auth/session?id=' + encodeURIComponent(state.user.id)); }
+    catch (e) { if (e.status !== 404) return; } // queda de rede: tenta de novo no próximo aviso
+    if (r && r.user) {
+      Object.assign(state.user, {
+        name: r.user.name, role: r.user.role,
+        acesso: r.user.acesso || {}, bloquear_alteracao: !!r.user.bloquear_alteracao,
+      });
+      state.operator = r.user.name;
+      aplicarPermissoesCss();
+    } else {
+      const guardada = readSession();
+      if (guardada && String(guardada.id) === String(state.user.id)) clearSession();
+      disconnectRealtime();
+      state.user = null; state.operator = '';
+      closeDrawer();
+      view().innerHTML = '';
+      $('nav').innerHTML = '';
+      setTopbar('');
+      showLogin('Seu acesso foi desativado ou removido. Fale com um administrador.');
+      return;
+    }
+    if (antes !== JSON.stringify([state.user.role, state.user.acesso])) {
+      buildNav();
+      renderUserBox();
+      setActive(state.route.seg, state.route.rest);
+      toast('Seus acessos foram atualizados por um administrador.');
+    }
+  }
+
   function startApp() {
     removeLogin();
     buildNav();
     renderUserBox();
     connectRealtime();
-    if (!location.hash) location.hash = '#/painel'; // dispara hashchange → handleRoute
+    const h = parseHash();
+    const alvo = (!location.hash || !temAcesso(acessoDaRota(h.seg, h.rest))) ? (primeiraRota() || '#/painel') : null;
+    if (alvo && alvo !== location.hash) location.hash = alvo; // dispara hashchange → handleRoute
     else handleRoute();
   }
 

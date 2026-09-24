@@ -918,3 +918,68 @@ textarea.insp-texto { max-width: 100%; resize: vertical; }
   .kv { grid-template-columns: 96px 1fr; gap: 6px 10px; }
   .epi-item-row { grid-template-columns: 1fr 66px 50px 30px; gap: 5px; }
 }
+
+/* ===================== Saída de estoque, painéis e acessos =====================
+   Botão de saída vermelho (par do "+ Entrada" verde), painéis administrativos
+   de Materiais e Frota e a matriz de acessos por aba em Operadores. */
+:root { --saida: #C62828; --saida-hover: #A61F1F; }
+:root[data-tema="escuro"] { --saida: #B3261E; --saida-hover: #CF3A30; }
+.btn-saida { background: var(--saida); border-color: var(--saida); color: #fff; }
+.btn-saida:hover { background: var(--saida-hover); border-color: var(--saida-hover); color: #fff; }
+
+.stat .stat-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.stat.is-saida .stat-value { color: var(--danger); }
+.pa-toolbar { gap: 12px; }
+.pa-periodo-rot { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted-2); }
+.pa-link { margin-left: auto; font-size: 13px; font-weight: 600; text-decoration: none; }
+.pa-link:hover { text-decoration: underline; }
+.pa-grid.pa-grid-um { grid-template-columns: minmax(0, 1fr); }
+.pa-nota { padding: 10px 16px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); }
+.mov-q { font-family: var(--mono); font-weight: 700; white-space: nowrap; }
+.mov-q.in { color: var(--accent); }
+.mov-q.out { color: var(--danger); }
+.placa {
+  display: inline-block; font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: .08em;
+  padding: 2px 8px; border-radius: 5px; border: 1.5px solid var(--line-strong);
+  background: var(--surface); color: var(--text); white-space: nowrap;
+}
+
+/* Botões das linhas não quebram texto; nome do item com largura mínima nas movimentações */
+.row-actions .btn { white-space: nowrap; }
+.mov-table .cell-title { min-width: 150px; }
+.drawer.drawer-largo { width: 780px; }
+.field-row.tres { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.acc-bloco { margin-top: 8px; }
+.acc-lock {
+  display: flex; gap: 11px; align-items: flex-start; padding: 12px 14px; margin-bottom: 12px; cursor: pointer;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.acc-lock input { margin-top: 2px; width: 16px; height: 16px; flex: none; accent-color: var(--danger); }
+.acc-lock strong { display: block; font-size: 13px; color: var(--text); }
+.acc-lock span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+.acc-lock.on { border-color: color-mix(in srgb, var(--danger) 55%, var(--line-strong)); background: var(--danger-soft); }
+.acc-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; font-size: 12px; color: var(--muted); }
+.acc-tools select.filter { padding: 5px 10px; font-size: 12px; }
+.acc-table th.acc-col, .acc-table td.acc-cel { text-align: center; width: 76px; padding-left: 4px; padding-right: 4px; }
+.acc-table th.acc-col button {
+  background: none; border: none; padding: 0; font: inherit; color: inherit; letter-spacing: inherit;
+  text-transform: inherit; cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;
+}
+.acc-table td.acc-cel input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+.acc-table td.acc-na { color: var(--muted-2); }
+.acc-table tr.acc-grupo td {
+  background: var(--surface-2); font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--muted-2); padding: 6px 12px;
+}
+.acc-table.acc-bloqueado .acc-alta { opacity: .35; }
+.acc-ajuda { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.acc-ajuda.lock { color: var(--danger); }
+.acc-admin { padding: 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); color: var(--muted); font-size: 13px; }
+.acc-resumo { font-size: 12px; color: var(--muted); }
+.pill.acc-lock-pill {
+  margin-top: 4px; color: var(--danger); background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line-strong));
+}
+@media (max-width: 880px) {
+  .field-row.tres { grid-template-columns: 1fr; }
+}

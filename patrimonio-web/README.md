@@ -38,11 +38,18 @@ O sistema abre numa **tela de login**. Cada operador entra com seu **login e sen
 - A **data e a hora de cada login** vão para a **Auditoria**, assim como toda alteração feita pelo operador (quem fez, o quê, quando).
 - O operador logado aparece no rodapé da barra lateral, com o botão **Sair**.
 
-### Operadores (somente administradores)
-Na aba **Operadores**, um administrador pode **cadastrar, editar e remover** operadores, definir **login e senha**, e o **papel**:
+### Operadores e acessos por aba (somente administradores)
+Na aba **Operadores**, um administrador pode **cadastrar, editar e remover** operadores, definir **login e senha**, o **papel** e **o que cada um pode fazer em cada aba**:
 
-- **Administrador** — acessa tudo, inclusive Operadores, Configurações e o Painel administrativo de Materiais.
-- **Operador** — acessa o restante do sistema (itens, pessoas, inventário, etiquetas, auditoria).
+- **Administrador** — acessa tudo, inclusive Operadores e Configurações.
+- **Operador** — acessa só o que estiver liberado na matriz **Acessos por aba**. Para cada aba há um nível:
+  - **Sem acesso** (a aba some do menu) · **Visualizar** · **Cadastrar** (cadastrar itens novos e dar entrada e saída) · **Editar** (também alterar o que já existe) · **Excluir** (também excluir).
+  - Nem toda aba tem todos os níveis (ex.: Painel, Pesquisa, Etiquetas e Auditoria são só de consulta). Os painéis administrativos de Materiais e de Frota têm linha própria.
+  - Atalhos: **Padrão**, **Só visualizar**, **Tudo liberado**, **Nenhum acesso**, clicar no nome de uma coluna para aplicar em todas as abas e **Copiar de outro operador**.
+- **Bloquear alteração de itens existentes** — opção por operador: ele continua cadastrando itens novos e dando entrada e saída, mas não altera nem exclui o que já está cadastrado, em nenhuma aba.
+- O servidor confere cada ação (não só a tela); quando falta permissão, a mensagem diz o que foi bloqueado. Mudanças de acesso valem na hora, sem o operador precisar sair e entrar.
+- Operadores cadastrados antes desta versão mantêm o que já faziam, com uma exceção: **Configurações** passa a ser só **Visualizar** (restaurar backup e mudar empresa/prefixo ficam com administradores, a menos que sejam liberados).
+- Nomes de operador são únicos (o nome identifica o operador na auditoria).
 
 > Importante: como o sistema roda **só no navegador**, o login serve para **identificar o operador** e registrar quem fez cada ação — não é uma segurança forte (os dados ficam no navegador e podem ser exportados). As senhas são guardadas com hash (não em texto puro).
 
@@ -74,9 +81,10 @@ Recomendação: baixe um backup de tempos em tempos e ao migrar de máquina. Na 
 - **Valor** e **data da compra** em todos os itens; o painel soma o patrimônio total.
 - **Patrimônio sequencial automático** com **QR Code**. O **prefixo é personalizável** (veja Configurações).
 - **Cadastro em lote e tipos livres**: ao cadastrar dá pra informar uma **Quantidade** (cria vários itens idênticos de uma vez, cada um com seu patrimônio sequencial) e escolher **"Outro tipo (especificar)"** para registrar tipos fora do catálogo.
-- **Materiais** (estoque de EPIs e itens de uso, com entrada/saída e estoque mínimo) e, logo abaixo dela, duas sub-abas:
-  - **Painel administrativo** (só administradores): visão geral do estoque de materiais e de frota, lista de **reposição necessária** (itens no mínimo ou abaixo), frota por categoria, **movimentações** com filtros por período, tipo e ação, e exportação do estoque para Excel.
-  - **Frota**: cadastro dos itens de manutenção dos caminhões — pneus, faróis e lâmpadas, filtros, óleos, baterias, peças de freio e suspensão… — com categoria, unidade de medida, estoque mínimo, marca e aplicação (em quais veículos serve). Entradas e saídas ficam na Auditoria; na saída dá para informar a **placa do veículo** que recebeu o item.
+- **Materiais** (estoque de EPIs e itens de uso, com entrada/saída e estoque mínimo), com a sub-aba **Painel administrativo** só dos materiais.
+- **Frota** (aba própria): cadastro dos itens de manutenção dos caminhões — pneus, faróis e lâmpadas, filtros, óleos, baterias, peças de freio e suspensão… — com categoria, unidade de medida, estoque mínimo, marca e aplicação (em quais veículos serve). Na saída dá para informar a **placa do veículo** que recebeu o item. Tem a sua sub-aba **Painel administrativo**.
+- **Painéis administrativos** (um de Materiais, outro de Frota): período escolhido no topo (7, 30 ou 90 dias, 12 meses ou tudo), cartões com as **unidades que entraram e saíram**, **reposição necessária**, **entradas e saídas por item** (quanto entrou, quanto saiu e o estoque atual) e **movimentações** com as colunas **Unidades** (+10 un / −1 un), **Estoque após**, **Veículo** (Frota) e **Motivo**. O da Frota mostra ainda a frota por categoria e o **consumo por veículo** (o que foi aplicado em cada placa). Os dois exportam para Excel.
+- Os botões **+ Entrada** (verde) e **− Saída** (vermelho) ficam lado a lado nas listas de Materiais e de Frota.
 - **Inventário** (conferência física): **digite o patrimônio e tecle Enter** (ou clique em **Conferir** na lista) para marcar os bens presentes. Mostra o progresso (% conferido), separa **pendentes** × **conferidos**, registra quem conferiu e quando, e tem **Reiniciar inventário**. Conferir um sub-item marca o item ao qual ele pertence.
 - **Etiquetas** para impressão — cada etiqueta traz a **logo da empresa**, o QR Code, o nome e o número do patrimônio.
 - **Auditoria** de todas as ações, incluindo **login/logout** com data e hora.

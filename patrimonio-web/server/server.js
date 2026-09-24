@@ -637,9 +637,11 @@ function handleApi(req, res) {
       // Atenção: o export cobre só os DADOS (JSON). Fotos de inspeção e PDFs de
       // EPI são arquivos em patrimonio-data/ — para backup completo, copie a pasta.
       if (urlPath === '/api/export' && req.method === 'GET') {
+        if (!db.pode(operator, 'config', 'ver')) return sendJson(res, 403, { error: 'Seu usuário não tem acesso às Configurações (backup).' });
         return sendJson(res, 200, JSON.parse(db.dump()));
       }
       if (urlPath === '/api/import' && req.method === 'POST') {
+        if (!db.pode(operator, 'config', 'editar')) return sendJson(res, 403, { error: 'Seu usuário não pode restaurar backup. Peça a um administrador.' });
         db.snapshot('pre-import'); // guarda o estado atual antes de substituir tudo
         try {
           db.restore(body);
