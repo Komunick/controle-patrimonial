@@ -52,6 +52,130 @@ fs.mkdirSync(EPI_ANEXOS_DIR, { recursive: true });
 // Fotos de evidência das inspeções 5S — também fora da pasta servida na web.
 const INSPECAO_FOTOS_DIR = path.join(db.DATA_DIR, 'inspecao-fotos');
 fs.mkdirSync(INSPECAO_FOTOS_DIR, { recursive: true });
+// Notas fiscais anexadas às entradas de estoque (Materiais e Frota) — idem.
+const NF_DIR = path.join(db.DATA_DIR, 'nf-anexos');
+fs.mkdirSync(NF_DIR, { recursive: true });
+const crypto = require('crypto');
+const NF_EXT = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+const NF_CT = { pdf: 'application/pdf', jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+const NF_NOME_OK = /^nf-(?:material|frota)-\d+-[0-9a-f]{12}\.(?:pdf|jpg|png|webp)$/;
+
+// Confere e grava a nota fiscal (data URL em base64). Devolve { info } com o
+// nome gerado aqui (aleatório, impossível de adivinhar) ou { erro }.
+function salvarNotaFiscal(tipo, nf) {
+  const dataUrl = String((nf && nf.base64) || '');
+  const cab = /^data:(application\/pdf|image\/jpeg|image\/png|image\/webp);base64,/.exec(dataUrl);
+  if (!cab) return { erro: 'Nota fiscal em formato não aceito. Use foto (JPG, PNG ou WebP) ou PDF.' };
+  let buf;
+  try { buf = Buffer.from(dataUrl.slice(cab[0].length), 'base64'); }
+  catch (e) { return { erro: 'Arquivo da nota fiscal inválido.' }; }
+  if (!buf || buf.length < 100) return { erro: 'Arquivo da nota fiscal vazio ou inválido.' };
+  if (buf.length > 10 * 1024 * 1024) return { erro: 'Nota fiscal grande demais (máx. 10 MB).' };
+  const ehPdf = buf.slice(0, 5).toString('latin1') === '%PDF-';
+  const ehImagem = (buf[0] === 0xFF && buf[1] === 0xD8)                    // JPEG
+    || (buf[0] === 0x89 && buf[1] === 0x50)                                // PNG
+    || (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP');
+  if (cab[1] === 'application/pdf' ? !ehPdf : !ehImagem) return { erro: 'O arquivo não é uma imagem ou um PDF válido.' };
+  const arquivo = `nf-${tipo}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.${NF_EXT[cab[1]]}`;
+  fs.writeFileSync(path.join(NF_DIR, arquivo), buf);
+  const nome = String((nf && nf.nome) || '').replace(/[\\/\r\n\t]+/g, ' ').trim().slice(0, 160) || null;
+  return { info: { arquivo, nome_original: nome, tipo: cab[1], tamanho: buf.length } };
+}
+
+// ---------------------------------------------------------------------------
+// Veículos do TMS (tms.braziltransports.com.br) — o TMS é o cadastro oficial de
+// veículos e reboques. Com PAT_TMS_EMAIL e PAT_TMS_SENHA definidos, o servidor
+// entra no TMS com essa conta (perfil com a permissão de frota, de preferência
+// "Coordenador de frota"), lê veículos e reboques e atualiza a lista local ao
+// iniciar e a cada PAT_TMS_INTERVALO_MIN minutos. A senha fica só no ambiente do
+// servidor: nunca vai para a base, para o log nem para o navegador.
+// ---------------------------------------------------------------------------
+const TMS = {
+  url: String(process.env.PAT_TMS_URL || 'https://tms.braziltransports.com.br').replace(/\/+$/, ''),
+  email: String(process.env.PAT_TMS_EMAIL || '').trim(),
+  senha: String(process.env.PAT_TMS_SENHA || ''),
+  intervaloMin: Math.max(5, parseInt(process.env.PAT_TMS_INTERVALO_MIN, 10) || 15),
+};
+const tmsConfigurado = () => !!(TMS.email && TMS.senha);
+let tmsRodando = null;     // sincronização em andamento (uma de cada vez)
+let tmsUltimoPedido = 0;   // trava do botão "Sincronizar agora"
+
+async function tmsFetch(caminho, opts) {
+  const ctrl = new AbortController();
+  const limite = setTimeout(() => ctrl.abort(), 20000);
+  try { return await fetch(TMS.url + caminho, Object.assign({ signal: ctrl.signal, redirect: 'manual' }, opts)); }
+  finally { clearTimeout(limite); }
+}
+// Cookies de sessão devolvidos pelo login (o Supabase pode dividir em .0, .1…).
+function tmsCookies(res) {
+  const lista = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : [];
+  return lista.map((c) => String(c).split(';')[0].trim()).filter((c) => c.includes('=')).join('; ');
+}
+async function tmsJson(res, oque) {
+  let dados = null;
+  try { dados = await res.json(); } catch (e) { /* resposta sem JSON */ }
+  if (!res.ok) {
+    const err = (dados && dados.error) || {};
+    const e = new Error(`${oque}: ${err.message || 'HTTP ' + res.status}`);
+    e.status = res.status;
+    e.code = err.code;
+    throw e;
+  }
+  return dados || {};
+}
+const tmsVeiculo = (v) => ({
+  tms_id: 'v:' + v.id, categoria: 'veiculo', placa: v.plate, tipo: v.vehicleType, status: v.status, arquivado: !!v.archived,
+  propriedade: v.ownershipType || null, renavam: v.renavam, chassi: v.chassis, antt: v.anttNumber,
+  proprietario: v.owner, capacidade_kg: v.capacityKg, obs: v.notes,
+});
+const tmsReboque = (r) => ({
+  tms_id: 'r:' + r.id, categoria: 'reboque', placa: r.plate, tipo: r.trailerType, status: r.status, arquivado: !!r.archived,
+  propriedade: r.ownershipType || null, renavam: null, chassi: null, antt: null,
+  proprietario: r.owner, capacidade_kg: r.capacityKg, obs: r.notes,
+});
+
+function sincronizarTms(origem) {
+  if (!tmsConfigurado()) return Promise.resolve({ ok: false, configurado: false, erro: 'A conexão com o TMS ainda não foi configurada no servidor.' });
+  if (tmsRodando) return tmsRodando;
+  tmsRodando = (async () => {
+    let cookie = '';
+    try {
+      const login = await tmsFetch('/api/auth/sign-in', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email: TMS.email, password: TMS.senha }),
+      });
+      const dl = await tmsJson(login, 'Login no TMS');
+      cookie = tmsCookies(login);
+      if (!cookie) throw new Error('Login no TMS: o TMS não devolveu a sessão.');
+      if (dl.redirectTo === '/auth/set-password') {
+        throw Object.assign(new Error('senha provisória'), { code: 'PASSWORD_CHANGE_REQUIRED' });
+      }
+      const h = { Cookie: cookie, Accept: 'application/json' };
+      const rv = await tmsJson(await tmsFetch('/api/master-data/vehicles?includeArchived=true', { headers: h }), 'Veículos do TMS');
+      const rr = await tmsJson(await tmsFetch('/api/master-data/trailers?includeArchived=true', { headers: h }), 'Reboques do TMS');
+      const lista = (rv.items || []).map(tmsVeiculo).concat((rr.items || []).map(tmsReboque));
+      const r = db.sincronizarVeiculosTms(lista, 'Sincronização TMS');
+      if (r.novos || r.atualizados || r.vinculados || r.fora) notifyChange('/api/veiculos', 'POST', 'Sincronização TMS', { headers: {} });
+      console.log(`[Controle Patrimonial] TMS (${origem}): ${r.total} veículo(s)/reboque(s) — ${r.novos} novo(s), ${r.atualizados} atualizado(s), ${r.vinculados} ligado(s) pela placa, ${r.fora} fora do TMS.`);
+      return Object.assign({ ok: true, configurado: true }, r);
+    } catch (e) {
+      let msg = e.message || 'Falha ao falar com o TMS.';
+      if (e.name === 'AbortError') msg = 'O TMS não respondeu a tempo.';
+      else if (e.code === 'PASSWORD_CHANGE_REQUIRED') msg = 'A conta do TMS usada pelo sistema ainda está com a senha provisória: entre uma vez com ela pelo navegador, defina a senha definitiva e atualize PAT_TMS_SENHA.';
+      else if (e.status === 401) msg = 'O TMS recusou o login (e-mail ou senha). Confira PAT_TMS_EMAIL e PAT_TMS_SENHA.';
+      else if (e.status === 403) msg = 'A conta do TMS não tem permissão para ver a frota. Use uma conta com perfil de Coordenador de frota.';
+      else if (!e.status) msg = 'Não foi possível falar com o TMS (' + (e.cause && e.cause.code ? e.cause.code : msg) + ').';
+      db.registrarFalhaTms(msg);
+      console.warn('[Controle Patrimonial] TMS (' + origem + '): ' + msg);
+      return { ok: false, configurado: true, erro: msg };
+    } finally {
+      if (cookie) tmsFetch('/api/auth/sign-out', { method: 'POST', headers: { Cookie: cookie } }).catch(() => {});
+      tmsRodando = null;
+    }
+  })();
+  return tmsRodando;
+}
 const zlib = require('zlib');
 
 // Decodifica um PNG RGB 8 bits (colorType 2, sem entrelaçamento) para RGB cru —
@@ -815,6 +939,63 @@ function handleApi(req, res) {
         if (rc.ok) notifyChange(urlPath, 'DELETE', operator, req);
         return sendJson(res, rc.status || 200, rc.ok ? rc.data : (rc.data || { error: 'Erro' }));
       }
+      // Veículos do TMS: situação da sincronização e o "Sincronizar agora".
+      if (urlPath === '/api/veiculos/sincronizacao' && req.method === 'GET') {
+        return sendJson(res, 200, {
+          configurado: tmsConfigurado(), url: TMS.url, intervalo_min: TMS.intervaloMin,
+          rodando: !!tmsRodando, ultima: db.statusTms(),
+        });
+      }
+      if (urlPath === '/api/veiculos/sincronizar' && req.method === 'POST') {
+        if (!db.pode(operator, 'veiculos', 'ver')) return sendJson(res, 403, { error: 'Seu usuário não tem acesso à aba Veículos.' });
+        if (!tmsConfigurado()) {
+          return sendJson(res, 400, { error: 'A conexão com o TMS ainda não foi configurada no servidor (PAT_TMS_EMAIL e PAT_TMS_SENHA).' });
+        }
+        if (!tmsRodando && Date.now() - tmsUltimoPedido < 30000) {
+          return sendJson(res, 429, { error: 'A lista acabou de ser atualizada. Aguarde alguns segundos.' });
+        }
+        tmsUltimoPedido = Date.now();
+        sincronizarTms('manual')
+          .then((r) => sendJson(res, r.ok ? 200 : 502, r.ok ? r : { error: r.erro }))
+          .catch((e) => sendJson(res, 500, { error: (e && e.message) || 'Falha na sincronização.' }));
+        return undefined;
+      }
+      // Entrada de estoque (ou cadastro com estoque inicial) com a nota fiscal
+      // anexada: grava o arquivo aqui e passa para a base só o nome, pelo
+      // "extra" da requisição (o corpo vindo do navegador não define arquivo).
+      m = urlPath.match(/^\/api\/(materiais|frota)(?:\/(\d+)\/ajuste)?$/);
+      if (m && req.method === 'POST' && body && body.nf && typeof body.nf === 'object' && body.nf.base64) {
+        if (m[2] && !(parseInt(body.delta, 10) > 0)) {
+          return sendJson(res, 400, { error: 'A nota fiscal só pode ser anexada numa entrada de estoque.' });
+        }
+        const nfSalva = salvarNotaFiscal(m[1] === 'materiais' ? 'material' : 'frota', body.nf);
+        if (nfSalva.erro) return sendJson(res, 400, { error: nfSalva.erro });
+        delete body.nf;
+        const rc = db.request('POST', urlPath, body, operator, { nf: nfSalva.info });
+        if (!rc.ok) {
+          try { fs.unlinkSync(path.join(NF_DIR, nfSalva.info.arquivo)); } catch (e) { /* ignore */ }
+          return sendJson(res, rc.status || 400, rc.data || { error: 'Não foi possível registrar a entrada.' });
+        }
+        notifyChange(urlPath, 'POST', operator, req);
+        return sendJson(res, rc.status || 200, rc.data);
+      }
+      // Abrir a nota fiscal anexada (só arquivos da pasta de notas, pelo nome gerado aqui).
+      m = urlPath.match(/^\/api\/estoque\/nf\/([A-Za-z0-9._-]+)$/);
+      if (m && req.method === 'GET') {
+        if (!NF_NOME_OK.test(m[1])) return sendJson(res, 404, { error: 'Nota fiscal não encontrada.' });
+        const alvo = path.normalize(path.join(NF_DIR, m[1]));
+        if (!alvo.startsWith(NF_DIR + path.sep)) return sendJson(res, 403, { error: 'Arquivo inválido.' });
+        return fs.readFile(alvo, (err, data) => {
+          if (err) return sendJson(res, 404, { error: 'Arquivo da nota fiscal não encontrado no servidor.' });
+          send(res, 200, data, {
+            'Content-Type': NF_CT[m[1].split('.').pop()],
+            'X-Content-Type-Options': 'nosniff',
+            'Cache-Control': 'private, max-age=3600',
+            'Content-Disposition': `inline; filename="${m[1]}"`,
+            'Content-Length': data.length,
+          });
+        });
+      }
       // Todas as demais rotas vão para a lógica compartilhada (store.js).
       // Atrás do proxy de assinatura/túnel a conexão chega por loopback — o IP
       // verdadeiro do assinante vem então no X-Forwarded-For.
@@ -883,3 +1064,12 @@ process.once('SIGTERM', () => encerrarServidor('SIGTERM'));
 // Snapshot automático periódico (rede de segurança adicional).
 const SNAP_MS = parseInt(process.env.PAT_SNAPSHOT_MS, 10) || 6 * 60 * 60 * 1000; // 6 h
 setInterval(() => { try { db.snapshot('auto'); } catch (e) { /* ignore */ } }, SNAP_MS).unref();
+
+// Veículos do TMS: primeira leitura logo depois de subir e depois no intervalo.
+if (tmsConfigurado()) {
+  console.log(`[Controle Patrimonial] veículos do TMS: ${TMS.url}, a cada ${TMS.intervaloMin} min.`);
+  setTimeout(() => { sincronizarTms('início'); }, 10 * 1000).unref();
+  setInterval(() => { sincronizarTms('automática'); }, TMS.intervaloMin * 60 * 1000).unref();
+} else {
+  console.log('[Controle Patrimonial] veículos do TMS: conexão não configurada (PAT_TMS_EMAIL e PAT_TMS_SENHA).');
+}

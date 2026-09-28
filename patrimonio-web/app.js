@@ -275,6 +275,8 @@
       { seg: 'materiais/painel', aba: 'materiais_painel', label: 'Painel administrativo', ico: '◫' },
     ] },
     { seg: 'frota', label: 'Frota', ico: '⛟', children: [
+      { seg: 'frota/veiculos', aba: 'veiculos', label: 'Veículos', ico: '▭' },
+      { seg: 'frota/manutencoes', aba: 'manutencoes', label: 'Manutenções', ico: '⚒' },
       { seg: 'frota/painel', aba: 'frota_painel', label: 'Painel administrativo', ico: '◫' },
     ] },
     { sep: true },
@@ -327,6 +329,7 @@
     if (seg === 'a') return { algum: ['equipamentos', 'pesquisa'] };
     if (seg === 'materiais' && rest[0] === 'frota') return { aba: 'frota', nivel: 'ver' };
     if ((seg === 'materiais' || seg === 'frota') && rest[0] === 'painel') return { aba: seg + '_painel', nivel: 'ver' };
+    if (seg === 'frota' && (rest[0] === 'veiculos' || rest[0] === 'manutencoes')) return { aba: rest[0], nivel: 'ver' };
     if (seg === 'inspecao' && rest[0] === 'preencher') return { aba: 'inspecao', nivel: 'criar' };
     if (((state.catalog && state.catalog.abas) || []).some((a) => a.key === seg)) return { aba: seg, nivel: 'ver' };
     return null;
@@ -394,6 +397,8 @@
 
   async function handleRoute() {
     pendingRefresh = false; // navegar já busca dados frescos
+    esconderTip();
+    aoRedimensionar = null;
     const { seg, rest } = parseHash();
     state.route = { seg, rest };
 
@@ -420,6 +425,9 @@
           break;
         case 'frota':
           if (rest[0] === 'painel') { setTitle('Frota · Painel administrativo'); await renderPainelEstoque('frota'); }
+          else if (rest[0] === 'veiculos' && rest[1]) { setTitle('Frota · Veículo'); await renderVeiculoFicha(rest[1]); }
+          else if (rest[0] === 'veiculos') { setTitle('Frota · Veículos'); await renderVeiculos(); }
+          else if (rest[0] === 'manutencoes') { setTitle('Frota · Manutenções'); await renderManutencoes(); }
           else { setTitle('Frota'); await renderFrota(); }
           break;
         case 'inventario': setTitle('Inventário'); setTopbar(''); await renderInventory(); break;
@@ -1360,7 +1368,7 @@
   }
 
   // Reduz a foto no navegador antes de enviar (celulares mandam fotos enormes).
-  function comprimirImagem(file) {
+  function comprimirImagem(file, maxLado) {
     return new Promise((resolve, reject) => {
       if (!file || !/^image\//.test(file.type)) return reject(new Error('Escolha um arquivo de imagem (foto).'));
       const url = URL.createObjectURL(file);
@@ -1368,7 +1376,7 @@
       img.onload = () => {
         URL.revokeObjectURL(url);
         try {
-          const MAX = 1600;
+          const MAX = maxLado || 1600;
           const f = Math.min(1, MAX / Math.max(img.width, img.height));
           const w = Math.max(1, Math.round(img.width * f));
           const h = Math.max(1, Math.round(img.height * f));
@@ -2224,27 +2232,117 @@
         <input id="mat-qtd" type="number" min="0" value="0"></div>`}
       <div class="field"><label for="mat-min">Estoque mínimo <span class="muted">(avisa quando chegar nesse número — opcional)</span></label>
         <input id="mat-min" type="number" min="0" value="${m && m.minimo != null ? m.minimo : ''}"></div>
+      ${m ? '' : campoNotaFiscal('Nota da compra do estoque inicial, se houver.')}
       <div class="form-actions">
         <button class="btn btn-ghost" id="mat-cancelar">Cancelar</button>
         <button class="btn btn-primary" id="mat-salvar">${m ? 'Salvar' : 'Cadastrar'}</button>
       </div>`;
     setTimeout(() => { const c = $('mat-nome'); if (c) c.focus(); }, 50);
+    const nfCad = m ? null : ligarNotaFiscal();
     $('mat-cancelar').onclick = closeDrawer;
     $('mat-salvar').onclick = async () => {
       const nome = $('mat-nome').value.trim();
       if (!nome) { toast('Informe o nome do material.', 'err'); return; }
       const minimo = $('mat-min').value === '' ? null : parseInt($('mat-min').value, 10) || 0;
+      const btn = $('mat-salvar');
+      btn.disabled = true;
       try {
         if (m) {
           await api('/api/materiais/' + m.id, { method: 'PUT', body: { nome, minimo } });
           toast('Material atualizado.');
         } else {
-          await api('/api/materiais', { method: 'POST', body: { nome, minimo, quantidade: parseInt($('mat-qtd').value, 10) || 0 } });
-          toast('Material cadastrado.');
+          const corpo = { nome, minimo, quantidade: parseInt($('mat-qtd').value, 10) || 0 };
+          const anexo = nfCad ? await nfCad.dados() : null;
+          if (anexo) corpo.nf = anexo;
+          await api('/api/materiais', { method: 'POST', body: corpo });
+          toast(anexo ? 'Material cadastrado com a nota fiscal.' : 'Material cadastrado.');
         }
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Nota fiscal na entrada de estoque (Materiais e Frota): foto ou PDF, opcional.
+  // A foto é reduzida no navegador (fica legível e leve); o PDF vai como está.
+  // O servidor grava o arquivo fora da pasta pública e a movimentação guarda o nome.
+  // ---------------------------------------------------------------------------
+  const NF_MAX_BYTES = 10 * 1024 * 1024;
+  // Caminho relativo: funciona na porta direta e também sob o portal unificado.
+  const nfUrl = (arquivo) => 'api/estoque/nf/' + encodeURIComponent(arquivo);
+  function tamanhoLegivel(n) {
+    if (n >= 1024 * 1024) return (n / (1024 * 1024)).toFixed(1).replace('.', ',') + ' MB';
+    return Math.max(1, Math.round(n / 1024)) + ' KB';
+  }
+  function lerComoDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const leitor = new FileReader();
+      leitor.onload = () => resolve(String(leitor.result || ''));
+      leitor.onerror = () => reject(new Error('Não foi possível ler o arquivo.'));
+      leitor.readAsDataURL(file);
+    });
+  }
+  function linkNotaFiscal(nf) {
+    if (!nf || !nf.arquivo) return '';
+    return `<a class="nf-link" href="${nfUrl(nf.arquivo)}" target="_blank" rel="noopener" title="${escapeHtml(nf.nome || 'Abrir a nota fiscal')}">📎 NF</a>`;
+  }
+  function campoNotaFiscal(ajuda) {
+    return `<div class="field"><label for="nf-escolher">Nota fiscal <span class="muted">(foto ou PDF — opcional)</span></label>
+      <div class="nf-anexo">
+        <input type="file" id="nf-arquivo" accept="image/*,application/pdf,.pdf" hidden>
+        <button type="button" class="btn btn-ghost btn-sm" id="nf-escolher">📎 Anexar foto ou PDF da nota</button>
+        <div class="nf-escolhido" id="nf-escolhido" hidden>
+          <img id="nf-mini" alt="" hidden>
+          <span class="nf-nome" id="nf-nome"></span>
+          <button type="button" class="icon-btn" id="nf-tirar" title="Remover o anexo">✕</button>
+        </div>
+      </div>
+      <div class="hint">${escapeHtml(ajuda || 'No celular dá para fotografar a nota na hora.')} Até 10 MB.</div></div>`;
+  }
+  // Liga o campo acima e devolve { tem(), dados() } — dados() entrega
+  // { base64, nome } pronto para enviar, ou null se nada foi anexado.
+  function ligarNotaFiscal() {
+    let arquivo = null;
+    const inp = $('nf-arquivo');
+    const ehPdf = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+    const mostrar = () => {
+      $('nf-escolhido').hidden = !arquivo;
+      $('nf-escolher').textContent = arquivo ? '📎 Trocar arquivo' : '📎 Anexar foto ou PDF da nota';
+      const mini = $('nf-mini');
+      if (mini.dataset.url) { URL.revokeObjectURL(mini.dataset.url); delete mini.dataset.url; }
+      if (arquivo && !ehPdf(arquivo)) {
+        mini.dataset.url = URL.createObjectURL(arquivo);
+        mini.src = mini.dataset.url;
+        mini.hidden = false;
+      } else { mini.hidden = true; mini.removeAttribute('src'); }
+      $('nf-nome').textContent = arquivo ? `${ehPdf(arquivo) ? 'PDF · ' : ''}${arquivo.name} · ${tamanhoLegivel(arquivo.size)}` : '';
+    };
+    $('nf-escolher').onclick = () => inp.click();
+    inp.onchange = () => {
+      const f = inp.files && inp.files[0];
+      inp.value = '';
+      if (!f) return;
+      if (!ehPdf(f) && !/^image\//.test(f.type)) { toast('Escolha uma foto ou um PDF da nota fiscal.', 'err'); return; }
+      if (ehPdf(f) && f.size > NF_MAX_BYTES) { toast('PDF grande demais (máx. 10 MB).', 'err'); return; }
+      arquivo = f;
+      mostrar();
+    };
+    $('nf-tirar').onclick = () => { arquivo = null; mostrar(); };
+    return {
+      tem: () => !!arquivo,
+      async dados() {
+        if (!arquivo) return null;
+        let base64;
+        if (ehPdf(arquivo)) {
+          base64 = (await lerComoDataUrl(arquivo)).replace(/^data:[^;,]*;base64,/, 'data:application/pdf;base64,');
+        } else {
+          try { base64 = await comprimirImagem(arquivo, 2400); }
+          catch (e) { throw new Error('Não foi possível ler a foto da nota. Use JPG, PNG ou PDF.'); }
+        }
+        return { base64, nome: arquivo.name };
+      },
     };
   }
 
@@ -2256,24 +2354,29 @@
         <input id="aj-qtd" type="number" min="1" value="1"></div>
       <div class="field"><label for="aj-motivo">Motivo</label>
         <input id="aj-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234' : 'Ex.: perda; descarte; uso interno'}"></div>
+      ${sinal > 0 ? campoNotaFiscal() : ''}
       <div class="form-actions">
         <button class="btn btn-ghost" id="aj-cancelar">Cancelar</button>
         <button class="btn ${sinal > 0 ? 'btn-primary' : 'btn-saida'}" id="aj-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
       </div>`;
     setTimeout(() => { const c = $('aj-qtd'); if (c) { c.focus(); c.select(); } }, 50);
+    const nf = sinal > 0 ? ligarNotaFiscal() : null;
     $('aj-cancelar').onclick = closeDrawer;
     $('aj-salvar').onclick = async () => {
       const qtd = parseInt($('aj-qtd').value, 10) || 0;
       if (qtd < 1) { toast('Informe uma quantidade maior que zero.', 'err'); return; }
+      const btn = $('aj-salvar');
+      btn.disabled = true;
       try {
-        const r = await api(`/api/materiais/${m.id}/ajuste`, {
-          method: 'POST',
-          body: { delta: sinal * qtd, motivo: $('aj-motivo').value.trim() || null },
-        });
-        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada — estoque de “${r.nome}”: ${r.quantidade} un.`);
+        const corpo = { delta: sinal * qtd, motivo: $('aj-motivo').value.trim() || null };
+        const anexo = nf ? await nf.dados() : null;
+        if (anexo) corpo.nf = anexo;
+        const r = await api(`/api/materiais/${m.id}/ajuste`, { method: 'POST', body: corpo });
+        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada${anexo ? ' com a nota fiscal' : ''} — estoque de “${r.nome}”: ${r.quantidade} un.`);
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
     };
   }
 
@@ -2385,11 +2488,13 @@
         <input id="fr-apl" maxlength="160" value="${escapeHtml(f ? f.aplicacao || '' : '')}" placeholder="Ex.: Scania R450 — eixo dianteiro · toda a frota Volvo FH"></div>
       <div class="field"><label for="fr-obs">Observações</label>
         <textarea id="fr-obs" maxlength="400" placeholder="Fornecedor, código de referência, garantia…">${escapeHtml(f ? f.obs || '' : '')}</textarea></div>
+      ${f ? '' : campoNotaFiscal('Nota da compra do estoque inicial, se houver.')}
       <div class="form-actions">
         <button class="btn btn-ghost" id="fr-cancelar">Cancelar</button>
         <button class="btn btn-primary" id="fr-salvar">${f ? 'Salvar' : 'Cadastrar'}</button>
       </div>`;
     setTimeout(() => { const c = $('fr-nome'); if (c) c.focus(); }, 50);
+    const nfCad = f ? null : ligarNotaFiscal();
     $('fr-cancelar').onclick = closeDrawer;
     $('fr-salvar').onclick = async () => {
       const nome = $('fr-nome').value.trim();
@@ -2401,18 +2506,23 @@
         aplicacao: $('fr-apl').value.trim() || null,
         obs: $('fr-obs').value.trim() || null,
       };
+      const btn = $('fr-salvar');
+      btn.disabled = true;
       try {
         if (f) {
           await api('/api/frota/' + f.id, { method: 'PUT', body: dados });
           toast('Item de frota atualizado.');
         } else {
           dados.quantidade = parseInt($('fr-qtd').value, 10) || 0;
+          const anexo = nfCad ? await nfCad.dados() : null;
+          if (anexo) dados.nf = anexo;
           await api('/api/frota', { method: 'POST', body: dados });
-          toast('Item de frota cadastrado.');
+          toast(anexo ? 'Item de frota cadastrado com a nota fiscal.' : 'Item de frota cadastrado.');
         }
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
     };
   }
 
@@ -2423,32 +2533,1016 @@
       <div class="field"><label for="fa-qtd">Quantidade que ${sinal > 0 ? 'entra' : 'sai'} * <span class="muted">(${escapeHtml(f.unidade)})</span></label>
         <input id="fa-qtd" type="number" min="1" value="1"></div>
       ${sinal < 0 ? `<div class="field"><label for="fa-placa">Veículo (placa) <span class="muted">(em qual caminhão foi aplicado — opcional)</span></label>
-        <input id="fa-placa" maxlength="12" placeholder="Ex.: ABC1D23" style="text-transform:uppercase"></div>` : ''}
+        <input id="fa-placa" maxlength="12" placeholder="Ex.: ABC1D23" style="text-transform:uppercase" list="fa-placas" autocomplete="off">
+        <datalist id="fa-placas"></datalist></div>` : ''}
       <div class="field"><label for="fa-motivo">${sinal > 0 ? 'Origem / nota fiscal' : 'Motivo'}</label>
         <input id="fa-motivo" maxlength="200" placeholder="${sinal > 0 ? 'Ex.: compra — NF 1234 · fornecedor' : 'Ex.: troca preventiva; furo; revisão dos 50 mil km'}"></div>
+      ${sinal > 0 ? campoNotaFiscal() : ''}
       <div class="form-actions">
         <button class="btn btn-ghost" id="fa-cancelar">Cancelar</button>
         <button class="btn ${sinal > 0 ? 'btn-primary' : 'btn-saida'}" id="fa-salvar">${sinal > 0 ? 'Registrar entrada' : 'Registrar saída'}</button>
       </div>`;
     setTimeout(() => { const c = $('fa-qtd'); if (c) { c.focus(); c.select(); } }, 50);
+    const nf = sinal > 0 ? ligarNotaFiscal() : null;
+    if (sinal < 0 && pode('veiculos', 'ver')) {
+      api('/api/veiculos').then((vs) => {
+        const dl = $('fa-placas');
+        if (dl) dl.innerHTML = vs.filter((v) => !foraDaLista(v)).map((v) => `<option value="${escapeHtml(v.placa)}">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', v.marca, v.modelo].filter(Boolean).join(' · '))}</option>`).join('');
+      }).catch(() => {});
+    }
     $('fa-cancelar').onclick = closeDrawer;
     $('fa-salvar').onclick = async () => {
       const qtd = parseInt($('fa-qtd').value, 10) || 0;
       if (qtd < 1) { toast('Informe uma quantidade maior que zero.', 'err'); return; }
       const placaEl = $('fa-placa');
+      const btn = $('fa-salvar');
+      btn.disabled = true;
       try {
-        const r = await api(`/api/frota/${f.id}/ajuste`, {
-          method: 'POST',
-          body: {
-            delta: sinal * qtd,
-            motivo: $('fa-motivo').value.trim() || null,
-            placa: placaEl ? (placaEl.value.trim().toUpperCase() || null) : null,
-          },
-        });
-        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada — estoque de “${r.nome}”: ${r.quantidade} ${r.unidade}.`);
+        const corpo = {
+          delta: sinal * qtd,
+          motivo: $('fa-motivo').value.trim() || null,
+          placa: placaEl ? (placaEl.value.trim().toUpperCase() || null) : null,
+        };
+        const anexo = nf ? await nf.dados() : null;
+        if (anexo) corpo.nf = anexo;
+        const r = await api(`/api/frota/${f.id}/ajuste`, { method: 'POST', body: corpo });
+        toast(`${sinal > 0 ? 'Entrada' : 'Saída'} registrada${anexo ? ' com a nota fiscal' : ''} — estoque de “${r.nome}”: ${r.quantidade} ${r.unidade}.`);
         closeDrawer();
         rerender();
       } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Frota ▸ Veículos e Manutenções — os veículos e reboques vêm do TMS
+  // (tms.braziltransports.com.br, sincronizado pelo servidor); aqui ficam o
+  // histórico de manutenções e os números: por mês, por tipo, por serviço e
+  // por veículo. Preventiva e Corretiva têm cores fixas em todas as
+  // telas (azul e laranja: par validado para daltonismo nos dois temas) e
+  // sempre aparecem com o nome ao lado — a cor nunca carrega o sentido sozinha.
+  // ---------------------------------------------------------------------------
+  const TIPO_MANUT = { preventiva: { rotulo: 'Preventiva', cls: 'prev' }, corretiva: { rotulo: 'Corretiva', cls: 'corr' } };
+  const tipoManutHtml = (t) => { const x = TIPO_MANUT[t] || TIPO_MANUT.preventiva; return `<span class="tipo-manut ${x.cls}">${x.rotulo}</span>`; };
+  const tiposVeiculo = () => state.catalog.tiposVeiculo || [];
+  const situacoesVeiculo = () => state.catalog.situacoesVeiculo || [];
+  const rotuloDe = (lista, k) => { const x = lista.find((i) => i.key === k); return x ? x.label : (k || '—'); };
+  const fmtKmTxt = (n) => (n == null ? '—' : Number(n).toLocaleString('pt-BR') + ' km');
+  const descVeiculo = (v) => [v.marca, v.modelo, v.ano].filter(Boolean).join(' ') || rotuloDe(tiposVeiculo(), v.tipo);
+  const semAcento = (s) => String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const MESES_CURTOS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const MESES_LONGOS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const rotuloMes = (k, comAno) => { const [y, m] = k.split('-'); return MESES_CURTOS[+m - 1] + (comAno ? '/' + y.slice(2) : ''); };
+  const rotuloMesLongo = (k) => { const [y, m] = k.split('-'); return `${MESES_LONGOS[+m - 1]} de ${y}`; };
+  const p2m = (n) => String(n).padStart(2, '0');
+  const dataHojeIso = () => { const d = new Date(); return `${d.getFullYear()}-${p2m(d.getMonth() + 1)}-${p2m(d.getDate())}`; };
+  function diasDesde(iso) {
+    const [y, m, d] = String(iso).split('-').map(Number);
+    const a = new Date(y, m - 1, d); const h = new Date(); h.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.round((h - a) / 86400000));
+  }
+  const propriedadesVeiculo = () => state.catalog.propriedadesVeiculo || [];
+  const foraDaLista = (v) => !!(v.arquivado || v.fora_do_tms);
+  function statusVeiculoPill(v) {
+    if (v.fora_do_tms) return '<span class="s5-chip bad">Fora do TMS</span>';
+    if (v.arquivado) return '<span class="s5-chip na">Arquivado no TMS</span>';
+    const cls = { active: 'ok', maintenance: 'warn', unavailable: 'bad', blocked: 'bad', inactive: 'na' }[v.status] || 'na';
+    return `<span class="s5-chip ${cls}">${escapeHtml(rotuloDe(situacoesVeiculo(), v.status || 'active'))}</span>`;
+  }
+  const rotuloVeiculoCurto = (v) => v.placa + (v.frota ? ' · Frota ' + v.frota : '') + ' · ' + (v.modelo || rotuloDe(tiposVeiculo(), v.tipo))
+    + (v.fora_do_tms ? ' (fora do TMS)' : (v.arquivado ? ' (arquivado)' : ''));
+  // Barra com a situação da sincronização com o TMS (lista, ficha e cadastro).
+  function tmsBarraHtml(st, n) {
+    if (!st) return '';
+    const u = st.ultima || {};
+    const quando = (ts) => (ts ? fmtDateTime(ts) : '');
+    if (!st.configurado) {
+      return `<div class="tms-barra aviso"><strong>A lista de veículos vem do TMS, mas a conexão ainda não foi configurada no servidor.</strong>
+        <span>Um administrador precisa definir PAT_TMS_EMAIL e PAT_TMS_SENHA com uma conta do TMS que tenha o perfil de Coordenador de frota. ${u.em ? 'Enquanto isso, fica valendo a lista da última sincronização, de ' + escapeHtml(quando(u.em)) + '.' : ''}</span></div>`;
+    }
+    if (u.ok === false) {
+      return `<div class="tms-barra erro"><strong>Não foi possível atualizar a lista com o TMS${u.falha_em ? ' em ' + escapeHtml(quando(u.falha_em)) : ''}.</strong>
+        <span>${escapeHtml(u.erro || '')} ${u.em ? 'A lista mostrada é a da última sincronização que deu certo, de ' + escapeHtml(quando(u.em)) + '.' : ''}</span></div>`;
+    }
+    return `<div class="tms-barra ok"><strong>Lista do TMS</strong>
+      <span>${n} veículo${n === 1 ? '' : 's'} e reboque${n === 1 ? '' : 's'} · ${u.em ? 'atualizada em ' + escapeHtml(quando(u.em)) : 'ainda não sincronizada'} · atualiza sozinha a cada ${st.intervalo_min} min</span></div>`;
+  }
+  async function sincronizarAgora(btn) {
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api('/api/veiculos/sincronizar', { method: 'POST' });
+      const emUso = r.total - (r.arquivados || 0);
+      toast(`Lista atualizada com o TMS: ${emUso} veículo(s) e reboque(s) em uso` + (r.novos ? `, ${r.novos} novo(s)` : '') + (r.fora ? `, ${r.fora} fora do TMS` : '') + '.');
+      rerender();
+    } catch (e) { toast(e.message, 'err'); rerender(); }
+    finally { if (btn) btn.disabled = false; }
+  }
+  const legendaHtml = () => '<div class="viz-legenda" aria-hidden="true"><span><i class="prev"></i>Preventiva</span><span><i class="corr"></i>Corretiva</span></div>';
+
+  // Ícones simples por tipo de serviço (traço na cor do texto).
+  const ICONES_SERVICO = [
+    { re: /óleo|oleo|lubrifica|graxa/i, svg: '<path d="M12 3c3 4.2 5 7.2 5 10a5 5 0 0 1-10 0c0-2.8 2-5.8 5-10z"/>' },
+    { re: /freio|pastilha|lona/i, svg: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>' },
+    { re: /filtro/i, svg: '<path d="M4 5h16l-6 7v6l-4 2v-8z"/>' },
+    { re: /pneu|rodízio|rodizio|alinhamento|balanceamento/i, svg: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/><path d="M12 4v4.5M12 15.5V20M4 12h4.5M15.5 12H20"/>' },
+    { re: /bateria|elétric|eletric|tacógrafo|tacografo|ar-condicionado/i, svg: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>' },
+    { re: /suspens|embreagem|câmbio|cambio|diferencial|motor/i, svg: '<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>' },
+  ];
+  const ICONE_CHAVE = '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.6-.6-2.1z"/>';
+  function iconeServico(servico) {
+    const x = ICONES_SERVICO.find((i) => i.re.test(servico || ''));
+    return `<svg class="ico-serv" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${x ? x.svg : ICONE_CHAVE}</svg>`;
+  }
+
+  // ---- Dica flutuante dos gráficos (valor primeiro, nome depois) ------------
+  let vizTip = null;
+  function mostrarTip(alvo, linhas, ev) {
+    if (!linhas) return;
+    if (!vizTip) {
+      vizTip = document.createElement('div');
+      vizTip.className = 'viz-tip';
+      vizTip.setAttribute('role', 'tooltip');
+      document.body.appendChild(vizTip);
+    }
+    vizTip.textContent = '';
+    linhas.forEach((l, i) => {
+      const row = document.createElement('div');
+      row.className = i === 0 ? 'viz-tip-tit' : 'viz-tip-linha';
+      if (l.cls) { const k = document.createElement('span'); k.className = 'viz-tip-chave ' + l.cls; row.appendChild(k); }
+      if (l.valor != null) { const v = document.createElement('strong'); v.textContent = l.valor; row.appendChild(v); }
+      row.appendChild(document.createTextNode((l.valor != null ? ' ' : '') + (l.texto || '')));
+      vizTip.appendChild(row);
+    });
+    vizTip.hidden = false;
+    const r = alvo.getBoundingClientRect();
+    const x = ev && ev.clientX != null ? ev.clientX : r.left + r.width / 2;
+    const y = ev && ev.clientY != null ? ev.clientY : r.top;
+    const tw = vizTip.offsetWidth, th = vizTip.offsetHeight;
+    let left = x + 14, top = y - th - 12;
+    if (left + tw > window.innerWidth - 8) left = x - tw - 14;
+    if (top < 8) top = y + 18;
+    vizTip.style.left = Math.max(8, left) + 'px';
+    vizTip.style.top = Math.max(8, top) + 'px';
+  }
+  function esconderTip() { if (vizTip) vizTip.hidden = true; }
+  function ligarTips(raiz, dados) {
+    raiz.querySelectorAll('[data-tip]').forEach((el) => {
+      const linhas = dados[+el.dataset.tip];
+      el.addEventListener('pointermove', (e) => mostrarTip(el, linhas, e));
+      el.addEventListener('pointerleave', esconderTip);
+      el.addEventListener('focus', () => mostrarTip(el, linhas));
+      el.addEventListener('blur', esconderTip);
+    });
+  }
+  // Gráficos são redesenhados na largura real quando a janela muda.
+  let aoRedimensionar = null;
+  let redimTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(redimTimer);
+    redimTimer = setTimeout(() => { if (aoRedimensionar) aoRedimensionar(); }, 150);
+  });
+
+  // ---- Série por mês --------------------------------------------------------
+  function mesesEntre(ini, fim) {
+    const out = [];
+    let [y, m] = ini.split('-').map(Number);
+    const [yf, mf] = fim.split('-').map(Number);
+    while (y < yf || (y === yf && m <= mf)) {
+      out.push(`${y}-${p2m(m)}`);
+      m += 1; if (m > 12) { m = 1; y += 1; }
+    }
+    return out;
+  }
+  function porMes(lista, meses) {
+    const idx = {};
+    const serie = meses.map((k) => (idx[k] = { chave: k, prev: 0, corr: 0, custo: 0 }));
+    lista.forEach((m) => {
+      const o = idx[String(m.data).slice(0, 7)];
+      if (!o) return;
+      if (m.tipo === 'corretiva') o.corr += 1; else o.prev += 1;
+      o.custo += m.custo_cents || 0;
+    });
+    return serie;
+  }
+  function passoBonito(max) {
+    const alvo = Math.max(1, max) / 4;
+    const p = Math.pow(10, Math.floor(Math.log10(alvo)));
+    for (const mult of [1, 2, 5, 10]) if (mult * p >= alvo) return Math.max(1, mult * p);
+    return 10 * p;
+  }
+  // Retângulo com cantos arredondados só no topo (a ponta do dado); base reta.
+  function barraCima(x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, h, w / 2));
+    if (!r) return `M${x},${y}h${w}v${h}h${-w}z`;
+    return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}z`;
+  }
+  // Colunas empilhadas por mês: preventiva na base, corretiva em cima, 2px de
+  // respiro entre os pedaços, barra de até 24px, grade em fio fino.
+  function desenharMeses(el, serie) {
+    if (!el) return;
+    const W = Math.max(240, Math.floor(el.clientWidth || 600));
+    const H = 220, padL = 34, padR = 84, padT = 12, padB = 26;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const n = Math.max(1, serie.length);
+    const maxTot = serie.reduce((mx, s) => Math.max(mx, s.prev + s.corr), 0);
+    const passo = passoBonito(maxTot);
+    const topo = Math.max(passo, Math.ceil(maxTot / passo) * passo);
+    const y = (v) => padT + plotH - (v / topo) * plotH;
+    const banda = plotW / n;
+    const bw = Math.min(24, Math.max(4, banda * 0.58));
+    const comAno = serie.length > 1 && serie[0].chave.slice(0, 4) !== serie[serie.length - 1].chave.slice(0, 4);
+    const pulo = Math.max(1, Math.ceil(n / Math.max(1, Math.floor(plotW / (comAno ? 52 : 40)))));
+    let g = '';
+    for (let v = 0; v <= topo + 1e-9; v += passo) {
+      const yy = Math.round(y(v)) + 0.5;
+      g += `<line class="viz-grade${v === 0 ? ' base' : ''}" x1="${padL}" x2="${W - padR + 10}" y1="${yy}" y2="${yy}"/>`;
+      g += `<text class="viz-eixo" x="${padL - 8}" y="${yy + 4}" text-anchor="end">${v}</text>`;
+    }
+    const tips = [];
+    serie.forEach((s, i) => {
+      const cx = padL + banda * i + banda / 2;
+      const x = cx - bw / 2;
+      let base = y(0);
+      const segs = [];
+      if (s.prev) segs.push(['prev', s.prev]);
+      if (s.corr) segs.push(['corr', s.corr]);
+      segs.forEach(([cls, v], j) => {
+        const hv = (v / topo) * plotH;
+        const bottom = base - (j > 0 ? 2 : 0);
+        const top = base - hv;
+        g += `<path class="viz-${cls}" d="${barraCima(x, top, bw, Math.max(1, bottom - top), j === segs.length - 1 ? 4 : 0)}"/>`;
+        base = top;
+      });
+      tips.push([{ texto: rotuloMesLongo(s.chave) },
+        { valor: String(s.prev), texto: s.prev === 1 ? 'preventiva' : 'preventivas', cls: 'prev' },
+        { valor: String(s.corr), texto: s.corr === 1 ? 'corretiva' : 'corretivas', cls: 'corr' },
+        { valor: fmtCurrency(s.custo), texto: 'de custo' }]);
+      g += `<rect class="viz-alvo" x="${padL + banda * i}" y="${padT}" width="${banda}" height="${plotH}" tabindex="0" data-tip="${i}" aria-label="${escapeHtml(rotuloMesLongo(s.chave))}: ${s.prev} preventivas e ${s.corr} corretivas"></rect>`;
+      if ((n - 1 - i) % pulo === 0) g += `<text class="viz-eixo" x="${cx}" y="${H - 8}" text-anchor="middle">${rotuloMes(s.chave, comAno)}</text>`;
+    });
+    // Rótulo direto das séries ao lado da última coluna (se couber).
+    const ult = serie[serie.length - 1];
+    if (ult && ult.prev + ult.corr > 0) {
+      const xr = padL + banda * (n - 1) + banda / 2 + bw / 2 + 8;
+      let base = y(0);
+      if (ult.prev) {
+        const h = (ult.prev / topo) * plotH;
+        if (h >= 12) g += `<text class="viz-rotulo" x="${xr}" y="${base - h / 2 + 4}">Preventiva</text>`;
+        base -= h;
+      }
+      if (ult.corr) {
+        const h = (ult.corr / topo) * plotH;
+        if (h >= 12) g += `<text class="viz-rotulo" x="${xr}" y="${base - h / 2 + 3}">Corretiva</text>`;
+      }
+    }
+    el.innerHTML = `<svg class="viz-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Manutenções por mês, preventivas e corretivas. Os números estão também na tabela.">${g}</svg>`;
+    ligarTips(el, tips);
+  }
+  function tabelaMesesHtml(serie) {
+    return `<div class="table-wrap"><table>
+      <thead><tr><th>Mês</th><th class="num">Preventivas</th><th class="num">Corretivas</th><th class="num">Total</th><th class="num">Custo</th></tr></thead>
+      <tbody>${serie.slice().reverse().map((s) => `<tr><td>${escapeHtml(rotuloMesLongo(s.chave))}</td><td class="num">${s.prev}</td><td class="num">${s.corr}</td><td class="num">${s.prev + s.corr}</td><td class="num">${s.custo ? fmtCurrency(s.custo) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+  // Barras horizontais empilhadas (serviços, veículos): total na ponta.
+  function barrasHtml(itens) {
+    const max = Math.max(1, ...itens.map((i) => i.prev + i.corr));
+    const tips = [];
+    const html = `<div class="hbar-lista">${itens.map((it, i) => {
+      const tot = it.prev + it.corr;
+      tips.push([{ texto: it.rotulo + (it.sub ? ' · ' + it.sub : '') },
+        { valor: String(it.prev), texto: it.prev === 1 ? 'preventiva' : 'preventivas', cls: 'prev' },
+        { valor: String(it.corr), texto: it.corr === 1 ? 'corretiva' : 'corretivas', cls: 'corr' }]
+        .concat(it.custo ? [{ valor: fmtCurrency(it.custo), texto: 'de custo' }] : []));
+      const segs = [];
+      if (it.prev) segs.push(['prev', it.prev]);
+      if (it.corr) segs.push(['corr', it.corr]);
+      return `<div class="hbar" tabindex="0" data-tip="${i}" aria-label="${escapeHtml(it.rotulo)}: ${it.prev} preventivas e ${it.corr} corretivas">
+        <div class="hbar-rot">${it.href ? `<a href="${it.href}">${escapeHtml(it.rotulo)}</a>` : escapeHtml(it.rotulo)}${it.sub ? `<span class="cell-sub">${escapeHtml(it.sub)}</span>` : ''}</div>
+        <div class="hbar-trilho">${segs.map(([cls, v], j) => `<span class="hbar-seg ${cls}${j === segs.length - 1 ? ' fim' : ''}" style="width:calc(${((v / max) * 100).toFixed(2)}% - ${j > 0 ? 2 : 0}px)"></span>`).join('')}</div>
+        <div class="hbar-val">${tot}</div>
+      </div>`;
+    }).join('')}</div>`;
+    return { html, tips };
+  }
+  function agruparServicos(lista) {
+    const g = {};
+    lista.forEach((m) => {
+      const k = String(m.servico || '').trim().toLowerCase();
+      const o = g[k] || (g[k] = { rotulo: m.servico, prev: 0, corr: 0, custo: 0 });
+      if (m.tipo === 'corretiva') o.corr += 1; else o.prev += 1;
+      o.custo += m.custo_cents || 0;
+    });
+    return Object.values(g).sort((a, b) => (b.prev + b.corr) - (a.prev + a.corr) || b.custo - a.custo);
+  }
+  function linhaDoTempoVertical(hist) {
+    if (!hist.length) return '<div class="empty">Nenhuma manutenção registrada para este veículo.</div>';
+    return `<ol class="tl-v">${hist.map((m) => `<li>
+        <span class="tl-ico${m.tipo === 'corretiva' ? ' corr' : ''}">${iconeServico(m.servico)}</span>
+        <div class="tl-corpo">
+          <div class="tl-cab"><strong>${fmtDate(m.data)}</strong>${m.km != null ? `<span>${escapeHtml(fmtKmTxt(m.km))}</span>` : ''}${tipoManutHtml(m.tipo)}</div>
+          <div class="tl-serv">${escapeHtml(m.servico)}</div>
+          ${m.custo_cents != null || m.oficina ? `<div class="cell-sub">${escapeHtml([m.custo_cents != null ? fmtCurrency(m.custo_cents) : '', m.oficina || ''].filter(Boolean).join(' · '))}</div>` : ''}
+          ${m.obs ? `<div class="cell-sub">${escapeHtml(m.obs)}</div>` : ''}
+        </div>
+        <div class="row-actions">
+          <button class="btn btn-mini btn-ghost" data-editar="${m.id}" data-req="manutencoes:editar">Editar</button>
+          <button class="btn btn-mini btn-ghost" data-excluir="${m.id}" data-req="manutencoes:excluir" title="Excluir manutenção">🗑</button>
+        </div></li>`).join('')}</ol>`;
+  }
+  async function excluirManutencao(m) {
+    const ok2 = await confirmDialog('Excluir manutenção',
+      `Excluir a manutenção “${m.servico}” de ${fmtDate(m.data)} (${m.placa})? Esta ação não pode ser desfeita.`, 'Excluir', true);
+    if (!ok2) return;
+    try { await api('/api/manutencoes/' + m.id, { method: 'DELETE' }); toast('Manutenção excluída.'); rerender(); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+  function ligarAcoesManutencao(raiz, lista, veiculos) {
+    const porId = (idStr) => lista.find((m) => String(m.id) === idStr);
+    raiz.querySelectorAll('[data-editar]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const m = porId(b.dataset.editar); if (m) manutencaoForm(m, { veiculos }); }; });
+    raiz.querySelectorAll('[data-excluir]').forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const m = porId(b.dataset.excluir); if (m) excluirManutencao(m); }; });
+  }
+
+  // ---- Veículos: lista (vem do TMS) ------------------------------------------
+  async function renderVeiculos() {
+    setTopbar('<button class="btn btn-ghost" id="vei-sync">⟳ Sincronizar com o TMS</button>');
+    $('vei-sync').onclick = () => sincronizarAgora($('vei-sync'));
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    const verManut = pode('manutencoes', 'ver');
+    const ano = new Date().getFullYear();
+    const [todos, st, doAno] = await Promise.all([
+      api('/api/veiculos?todos=1'),
+      api('/api/veiculos/sincronizacao').catch(() => null),
+      verManut ? api('/api/manutencoes?desde=' + ano + '-01-01') : Promise.resolve(null),
+    ]);
+    const naLista = todos.filter((v) => !foraDaLista(v));
+    const nVeic = naLista.filter((v) => v.categoria !== 'reboque').length;
+    const nReb = naLista.length - nVeic;
+    const emManut = naLista.filter((v) => v.status === 'maintenance').length;
+    let cards = statCardSub('Veículos', nVeic, 'no cadastro do TMS')
+      + statCardSub('Reboques', nReb, 'no cadastro do TMS')
+      + statCard('Em manutenção no TMS', emManut, emManut ? 'is-warn' : '');
+    if (doAno) {
+      const prev = doAno.filter((m) => m.tipo !== 'corretiva').length;
+      const corr = doAno.length - prev;
+      const custo = doAno.reduce((s, m) => s + (m.custo_cents || 0), 0);
+      cards += statCardSub(`Manutenções em ${ano}`, doAno.length, `${prev} preventiva${prev === 1 ? '' : 's'} · ${corr} corretiva${corr === 1 ? '' : 's'}`)
+        + statCardSub(`Custo em ${ano}`, fmtCurrency(custo), doAno.length ? 'soma das manutenções do ano' : 'nenhuma manutenção no ano');
+    }
+    const tipoOpts = '<option value="">Todos os tipos</option>' + tiposVeiculo().map((t) => `<option value="${t.key}">${escapeHtml(t.label)}</option>`).join('');
+    const stOpts = '<option value="">Todos os status</option>' + situacoesVeiculo().map((s) => `<option value="${s.key}">${escapeHtml(s.label)}</option>`).join('');
+    view().innerHTML = `
+      ${tmsBarraHtml(st, naLista.length)}
+      <div class="cards cards-compact">${cards}</div>
+      <div class="toolbar">
+        <div class="search"><input id="vei-q" placeholder="Buscar por placa, nº da frota, marca ou modelo…"></div>
+        <select class="filter" id="vei-cat"><option value="">Veículos e reboques</option><option value="veiculo">Só veículos</option><option value="reboque">Só reboques</option></select>
+        <select class="filter" id="vei-tipo">${tipoOpts}</select>
+        <select class="filter" id="vei-st">${stOpts}</select>
+        <label class="chk"><input type="checkbox" id="vei-fora"> Mostrar arquivados e fora do TMS</label>
+      </div>
+      <div class="panel"><div id="vei-rows"></div></div>`;
+    const draw = () => {
+      const term = semAcento($('vei-q').value);
+      const cat = $('vei-cat').value, tipo = $('vei-tipo').value, stt = $('vei-st').value, fora = $('vei-fora').checked;
+      const rows = todos.filter((v) => (fora || !foraDaLista(v)) && (!cat || v.categoria === cat) && (!tipo || v.tipo === tipo) && (!stt || v.status === stt)
+        && (!term || semAcento([v.placa, v.frota, v.marca, v.modelo].filter(Boolean).join(' ')).includes(term)));
+      $('vei-rows').innerHTML = !rows.length
+        ? `<div class="empty">${todos.length ? 'Nenhum veículo para este filtro.' : '<strong>Nenhum veículo recebido do TMS ainda</strong>Assim que a conexão com o TMS estiver configurada, os veículos e reboques cadastrados lá aparecem aqui. Depois clique em “Sincronizar com o TMS”.'}</div>`
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Veículo</th><th>Tipo</th><th class="num">Km atual</th>${verManut ? '<th>Última manutenção</th><th class="num">Manutenções</th><th class="num">Custo total</th>' : ''}<th>Status no TMS</th><th></th></tr></thead>
+            <tbody>${rows.map((v) => `<tr class="clickable" data-id="${v.id}">
+              <td><div class="vei-id"><span class="placa">${escapeHtml(v.placa)}</span>${v.frota || v.modelo ? `<span class="cell-sub">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', [v.marca, v.modelo].filter(Boolean).join(' ')].filter(Boolean).join(' · '))}</span>` : ''}</div></td>
+              <td><div class="cell-title">${escapeHtml(rotuloDe(tiposVeiculo(), v.tipo))}</div><div class="cell-sub">${v.categoria === 'reboque' ? 'Reboque' : 'Veículo'}${v.propriedade ? ' · ' + escapeHtml(rotuloDe(propriedadesVeiculo(), v.propriedade)) : ''}</div></td>
+              <td class="num">${escapeHtml(fmtKmTxt(v.km_atual))}</td>
+              ${verManut ? `<td>${v.ultima ? `<div class="cell-title">${escapeHtml(v.ultima.servico)}</div><div class="cell-sub">${fmtDate(v.ultima.data)} · ${tipoManutHtml(v.ultima.tipo)}</div>` : '<span class="muted">nenhuma</span>'}</td>
+              <td class="num">${v.manutencoes}</td>
+              <td class="num">${v.custo_total_cents ? `<span class="val-cur">${fmtCurrency(v.custo_total_cents)}</span>` : '—'}</td>` : ''}
+              <td>${statusVeiculoPill(v)}</td>
+              <td><div class="row-actions">
+                <button class="btn btn-mini btn-ghost" data-editar="${v.id}" data-req="veiculos:editar" title="Nº da frota, marca, modelo, ano e km">Completar dados</button>
+              </div></td>
+            </tr>`).join('')}</tbody></table></div>`;
+      const porId = (idStr) => todos.find((v) => String(v.id) === idStr);
+      $('vei-rows').querySelectorAll('tr.clickable').forEach((tr) => {
+        tr.addEventListener('click', (e) => { if (e.target.closest('.row-actions')) return; location.hash = '#/frota/veiculos/' + tr.dataset.id; });
+      });
+      $('vei-rows').querySelectorAll('[data-editar]').forEach((b) => { b.onclick = () => { const v = porId(b.dataset.editar); if (v) veiculoForm(v); }; });
+    };
+    let deb;
+    $('vei-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(draw, 200); });
+    ['vei-cat', 'vei-tipo', 'vei-st', 'vei-fora'].forEach((id) => $(id).addEventListener('change', draw));
+    draw();
+  }
+
+  // Placa, tipo, status e documentos vêm do TMS; aqui se completam os dados de manutenção.
+  function veiculoForm(v) {
+    const body = openDrawer('Dados de manutenção — ' + v.placa);
+    const val = (k) => escapeHtml(v && v[k] != null ? String(v[k]) : '');
+    body.innerHTML = `
+      <div class="vf-tms-info">
+        <span class="placa">${escapeHtml(v.placa)}</span>
+        <span>${escapeHtml(rotuloDe(tiposVeiculo(), v.tipo))}${v.propriedade ? ' · ' + escapeHtml(rotuloDe(propriedadesVeiculo(), v.propriedade)) : ''}</span>
+        ${statusVeiculoPill(v)}
+        <div class="hint">Placa, tipo, status e documentos vêm do TMS. Para mudar, altere no TMS: a lista daqui se atualiza sozinha.</div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label for="vc-frota">Nº da frota</label><input id="vc-frota" maxlength="20" value="${val('frota')}" placeholder="Ex.: 012"></div>
+        <div class="field"><label for="vc-ano">Ano</label><input id="vc-ano" inputmode="numeric" maxlength="4" value="${val('ano')}" placeholder="Ex.: 2021"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label for="vc-marca">Marca</label><input id="vc-marca" maxlength="40" value="${val('marca')}" placeholder="Ex.: Volvo"></div>
+        <div class="field"><label for="vc-modelo">Modelo</label><input id="vc-modelo" maxlength="60" value="${val('modelo')}" placeholder="Ex.: FH 540"></div>
+      </div>
+      <div class="field"><label for="vc-km">Km atual</label><input id="vc-km" inputmode="numeric" value="${val('km_atual')}" placeholder="Ex.: 158432">
+        <div class="hint">Sobe sozinho quando uma manutenção é registrada com km maior.</div></div>
+      <div class="field"><label for="vc-obs">Observações</label><textarea id="vc-obs" maxlength="400" placeholder="Motorista fixo, implemento engatado, garantia…">${val('obs')}</textarea></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="vc-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="vc-salvar">Salvar</button>
+      </div>`;
+    setTimeout(() => { const c = $('vc-frota'); if (c) c.focus(); }, 50);
+    $('vc-cancelar').onclick = closeDrawer;
+    $('vc-salvar').onclick = async () => {
+      const dados = {
+        frota: $('vc-frota').value.trim() || null, ano: $('vc-ano').value.trim() || null,
+        marca: $('vc-marca').value.trim() || null, modelo: $('vc-modelo').value.trim() || null,
+        km_atual: $('vc-km').value.trim() || null, obs: $('vc-obs').value.trim() || null,
+      };
+      const btn = $('vc-salvar');
+      btn.disabled = true;
+      try {
+        await api('/api/veiculos/' + v.id, { method: 'PUT', body: dados });
+        toast('Dados do veículo salvos.');
+        closeDrawer();
+        rerender();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
+    };
+  }
+
+  // ---- Ficha do veículo -----------------------------------------------------
+  async function renderVeiculoFicha(id) {
+    setTopbar(`<a class="btn btn-ghost" href="#/frota/veiculos">← Veículos</a>
+      <button class="btn btn-ghost" id="vf-editar" data-req="veiculos:editar">✎ Completar dados</button>
+      <button class="btn btn-primary" id="vf-manut" data-req="manutencoes:criar">+ Registrar manutenção</button>`);
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    let v;
+    try { v = await api('/api/veiculos/' + encodeURIComponent(id)); }
+    catch (e) {
+      setTopbar('<a class="btn btn-ghost" href="#/frota/veiculos">← Veículos</a>');
+      view().innerHTML = `<div class="empty"><strong>Veículo não encontrado</strong>${escapeHtml(e.message)}</div>`;
+      return;
+    }
+    setTitle('Frota · Veículo ' + v.placa);
+    $('vf-editar').onclick = () => veiculoForm(v);
+    $('vf-manut').onclick = () => manutencaoForm(null, { veiculoId: v.id });
+    const verManut = pode('manutencoes', 'ver');
+    const hist = verManut ? (v.historico || []) : [];
+    let pecas = null;
+    if (pode('frota', 'ver')) {
+      try { pecas = ((await api('/api/movimentos?tipo=frota&limit=5000')).rows || []).filter((r) => r.action === 'saida' && r.placa === v.placa); }
+      catch (e) { pecas = null; }
+    }
+    const prev = hist.filter((m) => m.tipo !== 'corretiva').length;
+    const corr = hist.length - prev;
+    const pct = (x) => (hist.length ? Math.round((x / hist.length) * 100) + '% do total' : '—');
+    const ult = hist[0] || null;
+    const dias = ult ? diasDesde(ult.data) : null;
+    const comKm = hist.find((m) => m.km != null) || null;
+    const kmDesde = comKm && v.km_atual != null ? Math.max(0, v.km_atual - comKm.km) : null;
+    const hoje = new Date();
+    const mesFim = `${hoje.getFullYear()}-${p2m(hoje.getMonth() + 1)}`;
+    const ini = new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1);
+    const serie = porMes(hist, mesesEntre(`${ini.getFullYear()}-${p2m(ini.getMonth() + 1)}`, mesFim));
+    const servicos = agruparServicos(hist).slice(0, 8);
+    const dadosTms = [
+      ['Tipo', rotuloDe(tiposVeiculo(), v.tipo) + (v.categoria === 'reboque' ? ' (reboque)' : '')],
+      ['Propriedade', v.propriedade ? rotuloDe(propriedadesVeiculo(), v.propriedade) : ''],
+      ['Proprietário', v.proprietario], ['RENAVAM', v.renavam], ['Chassi', v.chassi], ['ANTT', v.antt],
+      ['Capacidade', v.capacidade_kg != null ? Number(v.capacidade_kg).toLocaleString('pt-BR') + ' kg' : ''],
+      ['Observações do TMS', v.obs_tms], ['Sincronizado em', v.sincronizado_em ? fmtDateTime(v.sincronizado_em) : ''],
+    ].filter(([, x]) => x);
+    view().innerHTML = `
+      <div class="panel panel-pad vf-cab">
+        <div class="vf-id"><span class="placa placa-g">${escapeHtml(v.placa)}</span>
+          <div><div class="vf-nome">${escapeHtml(descVeiculo(v))}</div>
+            <div class="cell-sub">${escapeHtml([v.frota ? 'Frota ' + v.frota : '', rotuloDe(tiposVeiculo(), v.tipo), v.propriedade ? rotuloDe(propriedadesVeiculo(), v.propriedade) : ''].filter(Boolean).join(' · '))}</div></div></div>
+        <div class="vf-km"><span class="vf-rot">Km atual</span><strong>${escapeHtml(fmtKmTxt(v.km_atual))}</strong></div>
+        ${statusVeiculoPill(v)}
+      </div>
+      ${v.obs ? `<div class="hint vf-obs">${escapeHtml(v.obs)}</div>` : ''}
+      ${verManut ? `
+      <div class="cards cards-compact">
+        ${statCardSub('Manutenções', hist.length, hist.length ? 'no histórico do veículo' : 'nenhuma registrada')}
+        ${statCardSub('Preventivas', prev, pct(prev))}
+        ${statCardSub('Corretivas', corr, pct(corr))}
+        ${statCardSub('Custo total', fmtCurrency(v.custo_total_cents || 0), hist.length ? 'soma das manutenções' : '')}
+        ${statCardSub('Última manutenção', ult ? (dias === 0 ? 'hoje' : `há ${dias} dia${dias === 1 ? '' : 's'}`) : '—', ult ? `${fmtDate(ult.data)} · ${ult.servico}` : '')}
+        ${statCardSub('Rodado desde a última', kmDesde != null ? fmtKmTxt(kmDesde) : '—', kmDesde != null ? `${fmtKmTxt(comKm.km)} → ${fmtKmTxt(v.km_atual)}` : 'informe o km nas manutenções')}
+      </div>
+      <div class="viz-grid2">
+        <div class="panel panel-pad">
+          <div class="viz-cab"><div class="section-title">Manutenções por mês · últimos 12 meses</div>${legendaHtml()}</div>
+          <div id="vf-grafico" class="viz-area"></div>
+          <div class="viz-rodape"><span></span><button type="button" class="btn btn-mini btn-ghost" id="vf-ver-tabela">Ver tabela</button></div>
+          <div id="vf-tabela" hidden>${tabelaMesesHtml(serie)}</div>
+        </div>
+        <div class="panel panel-pad">
+          <div class="viz-cab"><div class="section-title">Serviços feitos</div>${legendaHtml()}</div>
+          <div id="vf-servicos"></div>
+        </div>
+      </div>
+      <div class="section-title">Linha do tempo</div>
+      <div class="panel panel-pad" id="vf-linha">${linhaDoTempoVertical(hist)}</div>` : ''}
+      <div class="section-title">Dados do TMS <span class="muted">· para alterar, use o TMS</span></div>
+      <div class="panel panel-pad"><dl class="kv vf-kv">${dadosTms.map(([k, x]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(x))}</dd>`).join('')}</dl></div>
+      ${pecas ? `<div class="section-title">Peças aplicadas neste veículo <span class="muted">· saídas do estoque da Frota com esta placa</span></div>
+      <div class="panel">${!pecas.length ? '<div class="empty">Nenhuma saída de estoque registrada para esta placa.</div>' : `<div class="table-wrap"><table>
+        <thead><tr><th>Quando</th><th>Item</th><th class="num">Quantidade</th><th>Motivo</th><th>Operador</th></tr></thead>
+        <tbody>${pecas.map((r) => `<tr>
+          <td class="nowrap">${fmtDateTime(r.ts)}</td>
+          <td><div class="cell-title">${escapeHtml(r.item || '—')}</div></td>
+          <td class="num">${r.qtd == null ? '—' : escapeHtml(fmtQtd(Math.abs(r.qtd), r.unidade))}</td>
+          <td class="muted">${escapeHtml(r.motivo || '—')}</td>
+          <td>${escapeHtml(r.actor || '')}</td>
+        </tr>`).join('')}</tbody></table></div>`}</div>` : ''}`;
+    if (verManut) {
+      const desenhar = () => desenharMeses($('vf-grafico'), serie);
+      desenhar();
+      aoRedimensionar = desenhar;
+      $('vf-ver-tabela').onclick = () => {
+        const t = $('vf-tabela'); t.hidden = !t.hidden;
+        $('vf-ver-tabela').textContent = t.hidden ? 'Ver tabela' : 'Esconder tabela';
+      };
+      const bs = barrasHtml(servicos);
+      $('vf-servicos').innerHTML = servicos.length ? bs.html : '<div class="empty">Nenhum serviço registrado.</div>';
+      ligarTips($('vf-servicos'), bs.tips);
+      ligarAcoesManutencao($('vf-linha'), hist, null);
+    }
+  }
+
+  // ---- Manutenções: painel com histórico e números --------------------------
+  const manutFiltro = { periodo: '12m', veiculo: '', tipo: '', q: '' };
+  function intervaloPeriodo(p, lista) {
+    const hoje = new Date();
+    const y = hoje.getFullYear(), m = hoje.getMonth() + 1;
+    const mesAtual = `${y}-${p2m(m)}`;
+    const voltaMeses = (k) => { let yy = y, mm = m - (k - 1); while (mm <= 0) { mm += 12; yy -= 1; } return `${yy}-${p2m(mm)}`; };
+    if (p === '3m' || p === '6m' || p === '12m') { const ini = voltaMeses(parseInt(p, 10)); return { desde: ini + '-01', ate: null, mesIni: ini, mesFim: mesAtual }; }
+    if (p === 'ano') return { desde: `${y}-01-01`, ate: null, mesIni: `${y}-01`, mesFim: mesAtual };
+    if (p === 'ano-1') return { desde: `${y - 1}-01-01`, ate: `${y - 1}-12-31`, mesIni: `${y - 1}-01`, mesFim: `${y - 1}-12` };
+    const primeiro = lista.reduce((min, x) => (!min || x.data < min ? x.data : min), null);
+    return { desde: null, ate: null, mesIni: primeiro ? primeiro.slice(0, 7) : voltaMeses(12), mesFim: mesAtual };
+  }
+
+  async function renderManutencoes() {
+    setTopbar(`<button class="btn btn-ghost" id="mn-export">⬇ Exportar (Excel)</button>
+      <button class="btn btn-ghost" id="mn-importar" data-req="manutencoes:criar">⬆ Importar planilha</button>
+      <button class="btn btn-primary" id="mn-novo" data-req="manutencoes:criar">+ Registrar manutenção</button>`);
+    view().innerHTML = '<div class="empty">Carregando…</div>';
+    const [todas, veiculos] = await Promise.all([api('/api/manutencoes'), api('/api/veiculos?todos=1')]);
+    $('mn-novo').onclick = () => manutencaoForm(null, { veiculos });
+    $('mn-importar').onclick = () => importarPlanilha();
+    const vOpts = '<option value="">Todos os veículos</option>' + veiculos.slice().sort((a, b) => (foraDaLista(a) - foraDaLista(b)) || String(a.placa).localeCompare(String(b.placa)))
+      .map((v) => `<option value="${v.id}">${escapeHtml(rotuloVeiculoCurto(v))}</option>`).join('');
+    view().innerHTML = `
+      <div class="toolbar">
+        <label class="pa-periodo-rot" for="mn-periodo">Período</label>
+        <select class="filter" id="mn-periodo">
+          <option value="3m">Últimos 3 meses</option>
+          <option value="6m">Últimos 6 meses</option>
+          <option value="12m">Últimos 12 meses</option>
+          <option value="ano">Este ano</option>
+          <option value="ano-1">Ano passado</option>
+          <option value="tudo">Todo o histórico</option>
+        </select>
+        <select class="filter" id="mn-veic">${vOpts}</select>
+        <select class="filter" id="mn-tipo">
+          <option value="">Preventivas e corretivas</option>
+          <option value="preventiva">Só preventivas</option>
+          <option value="corretiva">Só corretivas</option>
+        </select>
+        <div class="search"><input id="mn-q" placeholder="Buscar serviço, oficina ou observação…"></div>
+      </div>
+      <div class="cards cards-compact" id="mn-cards"></div>
+      <div class="viz-grid2">
+        <div class="panel panel-pad">
+          <div class="viz-cab"><div class="section-title">Manutenções por mês</div>${legendaHtml()}</div>
+          <div id="mn-grafico" class="viz-area"></div>
+          <div class="viz-rodape"><span class="muted" id="mn-graf-nota"></span><button type="button" class="btn btn-mini btn-ghost" id="mn-ver-tabela">Ver tabela</button></div>
+          <div id="mn-tabela-meses" hidden></div>
+        </div>
+        <div class="panel panel-pad">
+          <div class="viz-cab"><div class="section-title">Serviços mais frequentes</div>${legendaHtml()}</div>
+          <div id="mn-servicos"></div>
+        </div>
+      </div>
+      <div class="viz-grid2">
+        <div class="panel panel-pad">
+          <div class="section-title">Linha do tempo · últimas manutenções</div>
+          <div id="mn-linha"></div>
+        </div>
+        <div class="panel panel-pad">
+          <div class="viz-cab"><div class="section-title">Veículos com mais manutenções</div>${legendaHtml()}</div>
+          <div id="mn-veiculos"></div>
+        </div>
+      </div>
+      <div class="section-title">Histórico de manutenções</div>
+      <div class="panel"><div id="mn-rows"></div></div>
+      <div class="form-actions mn-mais-box"><button class="btn btn-ghost" id="mn-mais" hidden>Mostrar mais</button></div>`;
+
+    $('mn-periodo').value = manutFiltro.periodo;
+    $('mn-veic').value = manutFiltro.veiculo;
+    $('mn-tipo').value = manutFiltro.tipo;
+    $('mn-q').value = manutFiltro.q;
+    let limite = 100;
+    let filtradas = [];
+    let serieMeses = [];
+    let servicos = [];
+    let porVeiculo = [];
+
+    const drawTabela = () => {
+      const lista = filtradas.slice(0, limite);
+      $('mn-rows').innerHTML = !filtradas.length
+        ? `<div class="empty">${todas.length ? 'Nenhuma manutenção para estes filtros.' : '<strong>Nenhuma manutenção registrada ainda</strong>Registre a primeira em “+ Registrar manutenção” ou traga o histórico que já existe em “Importar planilha”.'}</div>`
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Data</th><th>Veículo</th><th>Serviço</th><th class="num">Km</th><th>Tipo</th><th class="num">Custo</th><th>Oficina</th><th></th></tr></thead>
+            <tbody>${lista.map((m) => `<tr>
+              <td class="nowrap">${fmtDate(m.data)}</td>
+              <td><a class="placa-link" href="#/frota/veiculos/${m.veiculo_id}"><span class="placa">${escapeHtml(m.placa)}</span></a>${m.veiculo && m.veiculo.modelo ? `<div class="cell-sub">${escapeHtml(m.veiculo.modelo)}</div>` : ''}</td>
+              <td><div class="cell-title">${escapeHtml(m.servico)}</div>${m.obs ? `<div class="cell-sub">${escapeHtml(m.obs)}</div>` : ''}</td>
+              <td class="num">${m.km == null ? '—' : Number(m.km).toLocaleString('pt-BR')}</td>
+              <td>${tipoManutHtml(m.tipo)}</td>
+              <td class="num">${m.custo_cents == null ? '—' : `<span class="val-cur">${fmtCurrency(m.custo_cents)}</span>`}</td>
+              <td>${m.oficina ? escapeHtml(m.oficina) : '<span class="muted">—</span>'}</td>
+              <td><div class="row-actions">
+                <button class="btn btn-mini btn-ghost" data-editar="${m.id}" data-req="manutencoes:editar">Editar</button>
+                <button class="btn btn-mini btn-ghost" data-excluir="${m.id}" data-req="manutencoes:excluir" title="Excluir manutenção">🗑</button>
+              </div></td>
+            </tr>`).join('')}</tbody></table></div>`;
+      $('mn-mais').hidden = filtradas.length <= limite;
+      ligarAcoesManutencao($('mn-rows'), filtradas, veiculos);
+    };
+
+    const desenhar = () => {
+      manutFiltro.periodo = $('mn-periodo').value;
+      manutFiltro.veiculo = $('mn-veic').value;
+      manutFiltro.tipo = $('mn-tipo').value;
+      manutFiltro.q = $('mn-q').value;
+      const per = intervaloPeriodo(manutFiltro.periodo, todas);
+      const termo = semAcento(manutFiltro.q);
+      filtradas = todas.filter((m) => (!per.desde || m.data >= per.desde) && (!per.ate || m.data <= per.ate)
+        && (!manutFiltro.veiculo || String(m.veiculo_id) === manutFiltro.veiculo)
+        && (!manutFiltro.tipo || m.tipo === manutFiltro.tipo)
+        && (!termo || semAcento([m.servico, m.oficina, m.obs, m.placa].filter(Boolean).join(' ')).includes(termo)));
+      limite = 100;
+      const prev = filtradas.filter((m) => m.tipo !== 'corretiva').length;
+      const corr = filtradas.length - prev;
+      const custo = filtradas.reduce((s, m) => s + (m.custo_cents || 0), 0);
+      const comCusto = filtradas.filter((m) => m.custo_cents != null).length;
+      const nVeic = new Set(filtradas.map((m) => m.veiculo_id)).size;
+      const pct = (x) => (filtradas.length ? Math.round((x / filtradas.length) * 100) + '% do total' : '—');
+      $('mn-cards').innerHTML = statCardSub('Manutenções', filtradas.length, filtradas.length ? `em ${nVeic} veículo${nVeic === 1 ? '' : 's'}` : 'nenhuma no período')
+        + statCardSub('Preventivas', prev, pct(prev))
+        + statCardSub('Corretivas', corr, pct(corr))
+        + statCardSub('Custo no período', fmtCurrency(custo), comCusto ? `média de ${fmtCurrency(Math.round(custo / comCusto))} por manutenção` : 'sem custo informado')
+        + statCardSub('Veículos atendidos', nVeic, `de ${veiculos.filter((v) => !foraDaLista(v)).length} no TMS`);
+
+      let meses = mesesEntre(per.mesIni, per.mesFim);
+      let nota = '';
+      if (meses.length > 24) { meses = meses.slice(-24); nota = 'O gráfico mostra os últimos 24 meses do período.'; }
+      serieMeses = porMes(filtradas, meses);
+      desenharMeses($('mn-grafico'), serieMeses);
+      $('mn-graf-nota').textContent = nota;
+      $('mn-tabela-meses').innerHTML = tabelaMesesHtml(serieMeses);
+
+      servicos = agruparServicos(filtradas);
+      const bs = barrasHtml(servicos.slice(0, 6));
+      $('mn-servicos').innerHTML = servicos.length ? bs.html : '<div class="empty">Nenhuma manutenção no período.</div>';
+      ligarTips($('mn-servicos'), bs.tips);
+
+      const pv = {};
+      filtradas.forEach((m) => {
+        const o = pv[m.veiculo_id] || (pv[m.veiculo_id] = { id: m.veiculo_id, rotulo: m.placa, sub: m.veiculo ? [m.veiculo.frota ? 'Frota ' + m.veiculo.frota : '', m.veiculo.modelo].filter(Boolean).join(' · ') : '', prev: 0, corr: 0, custo: 0 });
+        if (m.tipo === 'corretiva') o.corr += 1; else o.prev += 1;
+        o.custo += m.custo_cents || 0;
+      });
+      porVeiculo = Object.values(pv).sort((a, b) => (b.prev + b.corr) - (a.prev + a.corr) || b.custo - a.custo);
+      const bv = barrasHtml(porVeiculo.slice(0, 6).map((o) => Object.assign({ href: '#/frota/veiculos/' + o.id }, o)));
+      $('mn-veiculos').innerHTML = porVeiculo.length ? bv.html : '<div class="empty">Nenhum veículo com manutenção no período.</div>';
+      ligarTips($('mn-veiculos'), bv.tips);
+
+      // Linha do tempo: as 6 mais recentes, da mais antiga para a mais nova.
+      const recentes = filtradas.slice(0, 6).reverse();
+      $('mn-linha').innerHTML = !recentes.length ? '<div class="empty">Nenhuma manutenção no período.</div>'
+        : `<div class="tl-h">${recentes.map((m) => `<a class="tl-h-item" href="#/frota/veiculos/${m.veiculo_id}">
+            <span class="tl-ico${m.tipo === 'corretiva' ? ' corr' : ''}">${iconeServico(m.servico)}</span>
+            <span class="tl-serv">${escapeHtml(m.servico)}</span>
+            <span class="cell-sub">${fmtDate(m.data)} · ${escapeHtml(m.placa)}</span>
+            ${tipoManutHtml(m.tipo)}
+          </a>`).join('')}</div>`;
+      drawTabela();
+    };
+
+    ['mn-periodo', 'mn-veic', 'mn-tipo'].forEach((id) => $(id).addEventListener('change', desenhar));
+    let deb;
+    $('mn-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(desenhar, 250); });
+    $('mn-mais').onclick = () => { limite += 100; drawTabela(); };
+    $('mn-ver-tabela').onclick = () => {
+      const t = $('mn-tabela-meses'); t.hidden = !t.hidden;
+      $('mn-ver-tabela').textContent = t.hidden ? 'Ver tabela' : 'Esconder tabela';
+    };
+    desenhar();
+    aoRedimensionar = () => desenharMeses($('mn-grafico'), serieMeses);
+
+    $('mn-export').onclick = () => {
+      if (typeof XLSX === 'undefined') { toast('Biblioteca de planilha indisponível.', 'err'); return; }
+      try {
+        const wb = XLSX.utils.book_new();
+        const add = (nome, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), nome);
+        const l = [['Data', 'Placa', 'Nº da frota', 'Veículo', 'Serviço', 'Tipo', 'Km', 'Custo (R$)', 'Oficina', 'Observações', 'Registrado por']];
+        filtradas.forEach((m) => l.push([fmtDate(m.data), m.placa, (m.veiculo && m.veiculo.frota) || '',
+          m.veiculo ? [m.veiculo.marca, m.veiculo.modelo].filter(Boolean).join(' ') : '', m.servico,
+          m.tipo === 'corretiva' ? 'Corretiva' : 'Preventiva', m.km == null ? '' : m.km,
+          m.custo_cents == null ? '' : m.custo_cents / 100, m.oficina || '', m.obs || '', m.created_by || '']));
+        add('Manutenções', l);
+        const pm = [['Mês', 'Preventivas', 'Corretivas', 'Total', 'Custo (R$)']];
+        serieMeses.forEach((s) => pm.push([rotuloMesLongo(s.chave), s.prev, s.corr, s.prev + s.corr, s.custo / 100]));
+        add('Por mês', pm);
+        const ps = [['Serviço', 'Preventivas', 'Corretivas', 'Total', 'Custo (R$)']];
+        servicos.forEach((g) => ps.push([g.rotulo, g.prev, g.corr, g.prev + g.corr, g.custo / 100]));
+        add('Por serviço', ps);
+        const pvv = [['Placa', 'Veículo', 'Preventivas', 'Corretivas', 'Total', 'Custo (R$)']];
+        porVeiculo.forEach((o) => pvv.push([o.rotulo, o.sub, o.prev, o.corr, o.prev + o.corr, o.custo / 100]));
+        add('Por veículo', pvv);
+        XLSX.writeFile(wb, `manutencoes-frota-${todayStr()}.xlsx`);
+        toast('Planilha das manutenções baixada.');
+      } catch (e) { toast('Falha ao exportar: ' + e.message, 'err'); }
+    };
+  }
+
+  async function manutencaoForm(m, opts) {
+    opts = opts || {};
+    let veiculos = opts.veiculos;
+    if (!veiculos) {
+      try { veiculos = await api('/api/veiculos?todos=1'); }
+      catch (e) { toast(e.message, 'err'); return; }
+    }
+    const body = openDrawer(m ? 'Corrigir manutenção' : 'Registrar manutenção');
+    if (!veiculos.length) {
+      body.innerHTML = '<div class="empty"><strong>Nenhum veículo recebido do TMS ainda</strong>Os veículos e reboques vêm do TMS. Veja a situação da conexão em <a href="#/frota/veiculos">Frota ▸ Veículos</a>.</div>';
+      return;
+    }
+    const selId = m ? m.veiculo_id : (opts.veiculoId || '');
+    const ordem = veiculos.slice().sort((a, b) => (foraDaLista(a) - foraDaLista(b)) || String(a.placa).localeCompare(String(b.placa)));
+    const vOpts = (selId ? '' : '<option value="">Escolha o veículo…</option>') + ordem.map((v) => `<option value="${v.id}"${String(v.id) === String(selId) ? ' selected' : ''}>${escapeHtml(rotuloVeiculoCurto(v))}</option>`).join('');
+    const hoje = dataHojeIso();
+    let tipo = m ? m.tipo : 'preventiva';
+    const val = (k) => escapeHtml(m && m[k] != null ? String(m[k]) : '');
+    body.innerHTML = `
+      <div class="field"><label for="mn-veic-f">Veículo *</label><select id="mn-veic-f">${vOpts}</select>
+        <div class="hint" id="mn-veic-hint"></div></div>
+      <div class="field-row">
+        <div class="field"><label for="mn-data">Data *</label><input id="mn-data" type="date" max="${hoje}" value="${m ? m.data : hoje}"></div>
+        <div class="field"><label for="mn-km">Km no hodômetro</label><input id="mn-km" inputmode="numeric" value="${val('km')}" placeholder="Ex.: 158432"></div>
+      </div>
+      <div class="field"><label for="mn-serv">Serviço *</label>
+        <input id="mn-serv" list="mn-servicos-lista" maxlength="120" value="${val('servico')}" placeholder="Ex.: Troca de óleo e filtro">
+        <datalist id="mn-servicos-lista">${(state.catalog.servicosManutencao || []).map((s) => `<option value="${escapeHtml(s)}">`).join('')}</datalist></div>
+      <div class="field"><label>Tipo *</label>
+        <div class="seg" id="mn-tipo-f">
+          <button type="button" class="seg-btn" data-t="preventiva">${tipoManutHtml('preventiva')}</button>
+          <button type="button" class="seg-btn" data-t="corretiva">${tipoManutHtml('corretiva')}</button>
+        </div>
+        <div class="hint">Preventiva: feita no prazo, para evitar problema. Corretiva: conserto de algo que quebrou.</div></div>
+      <div class="field-row">
+        <div class="field"><label for="mn-custo">Custo total</label><div class="with-prefix"><span class="pfx">R$</span><input id="mn-custo" inputmode="decimal" value="${m && m.custo_cents != null ? centsToInput(m.custo_cents) : ''}" placeholder="0,00"></div></div>
+        <div class="field"><label for="mn-ofic">Oficina / responsável</label><input id="mn-ofic" maxlength="80" value="${val('oficina')}" placeholder="Ex.: Concessionária Volvo"></div>
+      </div>
+      <div class="field"><label for="mn-obs">Observações</label><textarea id="mn-obs" maxlength="500" placeholder="Peças trocadas, garantia, próxima revisão…">${val('obs')}</textarea></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="mn-cancelar">Cancelar</button>
+        <button class="btn btn-primary" id="mn-salvar">${m ? 'Salvar correção' : 'Registrar manutenção'}</button>
+      </div>`;
+    const dica = () => {
+      const v = veiculos.find((x) => String(x.id) === $('mn-veic-f').value);
+      $('mn-veic-hint').textContent = v ? [`Km atual: ${fmtKmTxt(v.km_atual)}`,
+        v.ultima ? `última manutenção em ${fmtDate(v.ultima.data)} (${v.ultima.servico})` : 'sem manutenção registrada'].join(' · ') : '';
+    };
+    $('mn-veic-f').onchange = dica;
+    dica();
+    const pintarTipo = () => body.querySelectorAll('#mn-tipo-f .seg-btn').forEach((b) => b.classList.toggle('active', b.dataset.t === tipo));
+    body.querySelectorAll('#mn-tipo-f .seg-btn').forEach((b) => { b.onclick = () => { tipo = b.dataset.t; pintarTipo(); }; });
+    pintarTipo();
+    setTimeout(() => { const c = $(selId ? 'mn-serv' : 'mn-veic-f'); if (c) c.focus(); }, 50);
+    $('mn-cancelar').onclick = closeDrawer;
+    $('mn-salvar').onclick = async () => {
+      const dados = {
+        veiculo_id: $('mn-veic-f').value, data: $('mn-data').value, servico: $('mn-serv').value.trim(), tipo,
+        km: $('mn-km').value.trim() || null, custo_cents: parseMoneyToCents($('mn-custo').value),
+        oficina: $('mn-ofic').value.trim() || null, obs: $('mn-obs').value.trim() || null,
+      };
+      if (!dados.veiculo_id) { toast('Escolha o veículo.', 'err'); return; }
+      if (!dados.data) { toast('Informe a data.', 'err'); return; }
+      if (!dados.servico) { toast('Informe o serviço feito.', 'err'); return; }
+      const btn = $('mn-salvar');
+      btn.disabled = true;
+      try {
+        if (m) { await api('/api/manutencoes/' + m.id, { method: 'PUT', body: dados }); toast('Manutenção corrigida.'); }
+        else { await api('/api/manutencoes', { method: 'POST', body: dados }); toast('Manutenção registrada.'); }
+        closeDrawer();
+        rerender();
+      } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; }
+    };
+  }
+
+  // ---- Importação do histórico de manutenções (Excel .xlsx ou CSV) -----------
+  // Os veículos vêm do TMS; a planilha só traz manutenções, achando o veículo
+  // pela placa ou pelo nº da frota já completado aqui.
+  const COLUNAS_MANUT = [
+    { campo: 'data', rotulo: 'Data', nomes: ['data', 'datadamanutencao', 'datadoservico', 'dataservico', 'dia'] },
+    { campo: 'placa', rotulo: 'Placa', nomes: ['placa', 'placadoveiculo', 'veiculo'] },
+    { campo: 'frota', rotulo: 'Nº da frota', nomes: ['ndafrota', 'nfrota', 'numerodafrota', 'frota', 'prefixo'] },
+    { campo: 'servico', rotulo: 'Serviço', nomes: ['servico', 'servicorealizado', 'descricaodoservico', 'descricao', 'manutencao'] },
+    { campo: 'tipo', rotulo: 'Tipo', nomes: ['tipo', 'tipodemanutencao', 'tipomanutencao'] },
+    { campo: 'km', rotulo: 'Km', nomes: ['km', 'quilometragem', 'hodometro', 'kmdoveiculo', 'odometro'] },
+    { campo: 'custo', rotulo: 'Custo', nomes: ['custors', 'custo', 'custototal', 'valorrs', 'valor', 'valortotal', 'preco'] },
+    { campo: 'oficina', rotulo: 'Oficina', nomes: ['oficina', 'fornecedor', 'prestador', 'responsavel', 'mecanico', 'local'] },
+    { campo: 'obs', rotulo: 'Observações', nomes: ['observacoes', 'observacao', 'obs'] },
+  ];
+  function lerCsv(texto) {
+    const primeira = texto.split(/\r?\n/, 1)[0] || '';
+    const sep = [';', '\t', ','].map((c) => [c, primeira.split(c).length]).sort((a, b) => b[1] - a[1])[0][0];
+    const linhas = [];
+    let campo = '', linha = [], aspas = false;
+    for (let i = 0; i < texto.length; i++) {
+      const ch = texto[i];
+      if (aspas) {
+        if (ch === '"') { if (texto[i + 1] === '"') { campo += '"'; i++; } else aspas = false; }
+        else campo += ch;
+      } else if (ch === '"') aspas = true;
+      else if (ch === sep) { linha.push(campo); campo = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && texto[i + 1] === '\n') i++;
+        linha.push(campo); linhas.push(linha); linha = []; campo = '';
+      } else campo += ch;
+    }
+    if (campo !== '' || linha.length) { linha.push(campo); linhas.push(linha); }
+    return linhas;
+  }
+  async function lerPlanilha(file) {
+    const buf = await file.arrayBuffer();
+    if (/\.csv$/i.test(file.name || '') || file.type === 'text/csv') {
+      let texto;
+      try { texto = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+      catch (e) { texto = new TextDecoder('windows-1252').decode(buf); } // CSV salvo pelo Excel em português
+      return lerCsv(texto.replace(/^\uFEFF/, ''));
+    }
+    if (typeof XLSX === 'undefined') throw new Error('Biblioteca de planilha indisponível.');
+    let wb;
+    try { wb = XLSX.read(new Uint8Array(buf), { type: 'array' }); }
+    catch (e) { throw new Error('Não foi possível ler a planilha. Salve como Excel (.xlsx) ou CSV e tente de novo.'); }
+    const sh = wb.Sheets[wb.SheetNames[0]];
+    return XLSX.utils.sheet_to_json(sh, { header: 1, raw: true, defval: '' });
+  }
+  function dataDaPlanilha(v) {
+    if (v == null || v === '') return '';
+    if (typeof v === 'number' && v > 59 && v < 80000) { // data do Excel (número de série)
+      const d = new Date(Math.round((v - 25569) * 86400000));
+      return `${d.getUTCFullYear()}-${p2m(d.getUTCMonth() + 1)}-${p2m(d.getUTCDate())}`;
+    }
+    const t = String(v).trim();
+    let x = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(t);
+    if (x) return `${x[1]}-${p2m(x[2])}-${p2m(x[3])}`;
+    x = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/.exec(t);
+    if (x) return `${x[3].length === 2 ? '20' + x[3] : x[3]}-${p2m(x[2])}-${p2m(x[1])}`;
+    return t; // o servidor aponta a linha com data inválida
+  }
+  function custoDaPlanilha(v) {
+    if (v == null || v === '') return null;
+    if (typeof v === 'number') return Math.round(v * 100);
+    return parseMoneyToCents(String(v));
+  }
+  const tipoManutDeTexto = (v) => (semAcento(v).startsWith('c') ? 'corretiva' : 'preventiva');
+  function mapearPlanilha(brutas) {
+    const defs = COLUNAS_MANUT;
+    const iCab = brutas.findIndex((l) => Array.isArray(l) && l.filter((c) => String(c).trim() !== '').length >= 2);
+    if (iCab < 0) return { erro: 'Não achei a linha com os nomes das colunas. A primeira linha da planilha precisa ter os títulos (Data, Placa, Serviço…).' };
+    const cab = brutas[iCab].map(semAcento);
+    const usado = {};
+    const mapa = {};
+    const acha = (d, cmp) => {
+      for (const nome of d.nomes) {
+        const idx = cab.findIndex((c, i) => c && !(i in usado) && cmp(c, nome));
+        if (idx >= 0) { mapa[d.campo] = idx; usado[idx] = d.campo; return true; }
+      }
+      return false;
+    };
+    defs.forEach((d) => { acha(d, (c, nome) => c === nome); });
+    defs.forEach((d) => { if (!(d.campo in mapa)) acha(d, (c, nome) => c.startsWith(nome)); });
+    const faltam = ['data', 'servico'].filter((c) => !(c in mapa));
+    if (!('placa' in mapa) && !('frota' in mapa)) faltam.push('placa');
+    if (faltam.length) {
+      const nomes = faltam.map((c) => (defs.find((d) => d.campo === c) || { rotulo: c }).rotulo);
+      return { erro: `A planilha precisa ter a coluna ${nomes.join(' e ')}.` };
+    }
+    const reconhecidas = defs.filter((d) => d.campo in mapa).map((d) => `${String(brutas[iCab][mapa[d.campo]]).trim()} → ${d.rotulo}`);
+    const ignoradas = brutas[iCab].filter((c, i) => String(c).trim() && !(i in usado)).map((c) => String(c).trim());
+    const s = (v) => (v == null ? '' : String(v).trim());
+    const linhas = [];
+    for (let r = iCab + 1; r < brutas.length; r++) {
+      const row = brutas[r];
+      if (!Array.isArray(row) || row.every((c) => String(c).trim() === '')) continue;
+      const o = {};
+      Object.keys(mapa).forEach((campo) => { o[campo] = row[mapa[campo]]; });
+      linhas.push({ linha: r + 1, placa: s(o.placa) || null, frota: s(o.frota) || null, data: dataDaPlanilha(o.data),
+        servico: s(o.servico), tipo: tipoManutDeTexto(o.tipo), tipo_informado: !!s(o.tipo), km: s(o.km) || null,
+        custo_cents: custoDaPlanilha(o.custo), oficina: s(o.oficina) || null, obs: s(o.obs) || null });
+    }
+    return { linhas, reconhecidas, ignoradas };
+  }
+  function baixarModeloPlanilha() {
+    if (typeof XLSX === 'undefined') { toast('Biblioteca de planilha indisponível.', 'err'); return; }
+    const wb = XLSX.utils.book_new();
+    const add = (nome, aoa) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), nome);
+    add('Manutenções', [['Data', 'Placa', 'Serviço', 'Tipo', 'Km', 'Custo (R$)', 'Oficina', 'Observações'],
+      ['16/05/2026', 'ABC1D23', 'Revisão 40 mil km', 'Preventiva', 158432, 2450, 'Concessionária Volvo', ''],
+      ['18/03/2026', 'ABC1D23', 'Pastilhas de freio', 'Corretiva', 149875, 610.5, 'Oficina do Zé', 'Eixo dianteiro']]);
+    add('Serviços sugeridos', [['Serviço'], ...(state.catalog.servicosManutencao || []).map((x) => [x])]);
+    XLSX.writeFile(wb, 'modelo-manutencoes.xlsx');
+  }
+  function importarPlanilha() {
+    const body = openDrawer('Importar histórico de manutenções', { largo: true });
+    body.innerHTML = `
+      <p class="cfg-text">Traga o histórico que já existe com uma planilha do Excel (.xlsx) ou CSV. A primeira linha precisa ter os nomes das colunas. Obrigatórias: <strong>Data</strong>, <strong>Serviço</strong> e <strong>Placa</strong> (ou <strong>Nº da frota</strong>) de um veículo que já veio do TMS. Opcionais: Tipo (preventiva ou corretiva), Km, Custo, Oficina e Observações.</p>
+      <div class="acc-tools">
+        <button type="button" class="btn btn-ghost btn-sm" id="imp-modelo">⬇ Baixar modelo de planilha</button>
+        <span>Linhas repetidas são ignoradas: dá para importar de novo sem duplicar.</span>
+      </div>
+      <div class="imp-arquivo">
+        <input type="file" id="imp-arq" accept=".xlsx,.xls,.csv,text/csv" hidden>
+        <button type="button" class="btn btn-primary" id="imp-escolher">Escolher planilha…</button>
+        <span class="muted" id="imp-nome">Nenhum arquivo escolhido</span>
+      </div>
+      <div id="imp-previa"></div>
+      <div id="imp-resultado"></div>
+      <div class="form-actions">
+        <button class="btn btn-ghost" id="imp-fechar">Fechar</button>
+        <button class="btn btn-primary" id="imp-enviar" disabled>Importar</button>
+      </div>`;
+    let linhas = [];
+    let nomeArquivo = '';
+    $('imp-modelo').onclick = baixarModeloPlanilha;
+    $('imp-fechar').onclick = closeDrawer;
+    $('imp-escolher').onclick = () => $('imp-arq').click();
+    $('imp-arq').onchange = async () => {
+      const f = $('imp-arq').files && $('imp-arq').files[0];
+      $('imp-arq').value = '';
+      if (!f) return;
+      nomeArquivo = f.name;
+      $('imp-nome').textContent = f.name;
+      $('imp-resultado').innerHTML = '';
+      $('imp-enviar').disabled = true;
+      linhas = [];
+      let r;
+      try { r = mapearPlanilha(await lerPlanilha(f)); }
+      catch (e) { $('imp-previa').innerHTML = `<div class="login-err">${escapeHtml(e.message)}</div>`; return; }
+      if (r.erro) { $('imp-previa').innerHTML = `<div class="login-err">${escapeHtml(r.erro)}</div>`; return; }
+      linhas = r.linhas;
+      if (!linhas.length) { $('imp-previa').innerHTML = '<div class="login-err">A planilha não tem linhas depois dos títulos.</div>'; return; }
+      const amostra = linhas.slice(0, 8);
+      $('imp-previa').innerHTML = `
+        <div class="imp-resumo"><strong>${linhas.length} linha${linhas.length === 1 ? '' : 's'}</strong> para importar.
+          <span class="muted">Colunas usadas: ${escapeHtml(r.reconhecidas.join(', '))}${r.ignoradas.length ? ' · não usadas: ' + escapeHtml(r.ignoradas.join(', ')) : ''}</span></div>
+        <div class="table-wrap"><table><thead><tr><th>Linha</th><th>Data</th><th>Veículo</th><th>Serviço</th><th>Tipo</th><th class="num">Km</th><th class="num">Custo</th></tr></thead>
+        <tbody>${amostra.map((l) => `<tr><td class="muted">${l.linha}</td><td>${escapeHtml(/^\d{4}-\d{2}-\d{2}$/.test(l.data) ? fmtDate(l.data) : (l.data || '—'))}</td><td>${escapeHtml(l.placa || (l.frota ? 'Frota ' + l.frota : '—'))}</td><td>${escapeHtml(l.servico || '—')}</td><td>${tipoManutHtml(l.tipo)}${l.tipo_informado ? '' : ' <span class="muted">(padrão)</span>'}</td><td class="num">${escapeHtml(l.km || '—')}</td><td class="num">${l.custo_cents == null ? '—' : fmtCurrency(l.custo_cents)}</td></tr>`).join('')}</tbody></table></div>
+        ${linhas.length > amostra.length ? `<div class="hint">Mostrando as primeiras ${amostra.length} de ${linhas.length} linhas.</div>` : ''}`;
+      $('imp-enviar').disabled = false;
+      $('imp-enviar').textContent = `Importar ${linhas.length} linha${linhas.length === 1 ? '' : 's'}`;
+    };
+    $('imp-enviar').onclick = async () => {
+      if (!linhas.length) return;
+      const btn = $('imp-enviar');
+      btn.disabled = true;
+      try {
+        const corpo = { arquivo: nomeArquivo, linhas: linhas.map((l) => { const c = Object.assign({}, l); delete c.tipo_informado; return c; }) };
+        const res = await api('/api/manutencoes/importar', { method: 'POST', body: corpo });
+        const problemas = (res.erros || []).map((x) => ({ linha: x.linha, motivo: x.motivo, cls: 'bad' }))
+          .concat((res.ignorados || []).map((x) => ({ linha: x.linha, motivo: x.motivo, cls: 'na' })))
+          .sort((a, b) => a.linha - b.linha);
+        $('imp-resultado').innerHTML = `
+          <div class="imp-res">
+            <span class="s5-chip ok">${res.criados} registrada${res.criados === 1 ? '' : 's'}</span>
+            <span class="s5-chip na">${(res.ignorados || []).length} ignorada${(res.ignorados || []).length === 1 ? '' : 's'}</span>
+            <span class="s5-chip ${(res.erros || []).length ? 'bad' : 'na'}">${(res.erros || []).length} com erro</span>
+          </div>
+          ${problemas.length ? `<div class="table-wrap"><table><thead><tr><th>Linha</th><th>O que aconteceu</th></tr></thead><tbody>${problemas.slice(0, 200).map((p) => `<tr><td class="muted">${p.linha}</td><td><span class="s5-chip ${p.cls}">${p.cls === 'bad' ? 'Erro' : 'Ignorada'}</span> ${escapeHtml(p.motivo)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+        toast(`Importação concluída: ${res.criados} manutenção(ões) registrada(s).`);
+        linhas = [];
+        btn.textContent = 'Importar';
+        rerender();
+      } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
     };
   }
 
@@ -2512,7 +3606,10 @@
     const cfg = ESTOQUE[tipo];
     setTopbar('<button class="btn btn-primary" id="pa-export">⬇ Exportar (Excel)</button>');
     view().innerHTML = '<div class="empty">Carregando…</div>';
-    const [itens, mov] = await Promise.all([api(cfg.api), api('/api/movimentos?tipo=' + tipo + '&limit=5000')]);
+    const [itens, mov, veicCad] = await Promise.all([api(cfg.api), api('/api/movimentos?tipo=' + tipo + '&limit=5000'),
+      tipo === 'frota' && pode('veiculos', 'ver') ? api('/api/veiculos').catch(() => []) : Promise.resolve([])]);
+    const veicPorPlaca = {};
+    veicCad.forEach((v) => { veicPorPlaca[v.placa] = v; });
     const movs = mov.rows || [];
     const porId = {};
     itens.forEach((it) => { porId[it.id] = it; });
@@ -2597,6 +3694,7 @@
           <option value="editar">Edições</option>
           <option value="excluir">Exclusões</option>
         </select>
+        <label class="chk"><input type="checkbox" id="pa-so-nf"> Só com nota fiscal</label>
       </div>
       <div class="panel"><div id="pa-rows"></div></div>`;
 
@@ -2612,16 +3710,18 @@
     const drawMovs = () => {
       const term = ($('pa-q').value || '').toLowerCase();
       const acao = $('pa-acao').value;
+      const soNf = $('pa-so-nf').checked;
       const hit = (v) => v != null && String(v).toLowerCase().includes(term);
-      filtradas = noPeriodo.filter((r) => (!acao || r.action === acao)
-        && (!term || hit(r.item) || hit(r.actor) || hit(r.placa) || hit(r.motivo) || hit(r.detalhes)));
+      filtradas = noPeriodo.filter((r) => (!acao || r.action === acao) && (!soNf || r.nf)
+        && (!term || hit(r.item) || hit(r.actor) || hit(r.placa) || hit(r.motivo) || hit(r.detalhes) || hit(r.nf && r.nf.nome)));
       $('pa-rows').innerHTML = !filtradas.length
         ? '<div class="empty">Nenhuma movimentação para este filtro.</div>'
         : `<div class="table-wrap"><table class="mov-table">
             <thead><tr><th>Quando</th><th>Operador</th><th>Ação</th><th>Item</th><th class="num">Unidades</th><th class="num">Estoque após</th>${cfg.veiculos ? '<th>Veículo</th>' : ''}<th>Motivo / detalhes</th></tr></thead>
             <tbody>${filtradas.map((r) => {
               const a = ACAO_MOV[r.action] || { rotulo: r.action, cls: 'na' };
-              const txt = textoMov(r);
+              // Com o selo da nota na linha, o aviso 'NF anexada' do texto fica redundante.
+              const txt = r.nf ? textoMov(r).replace(/ — NF anexada$/, '') : textoMov(r);
               return `<tr>
                 <td class="nowrap">${fmtDateTime(r.ts)}</td>
                 <td>${escapeHtml(r.actor)}</td>
@@ -2630,7 +3730,7 @@
                 <td class="num">${qtdMovHtml(r)}</td>
                 <td class="num mono">${r.estoque == null ? '<span class="muted">—</span>' : escapeHtml(fmtQtd(r.estoque, r.unidade))}</td>
                 ${cfg.veiculos ? `<td>${r.placa ? `<span class="placa">${escapeHtml(r.placa)}</span>` : '<span class="muted">—</span>'}</td>` : ''}
-                <td class="muted">${txt ? escapeHtml(txt) : '—'}</td>
+                <td class="muted">${txt ? escapeHtml(txt) : (r.nf ? '' : '—')}${linkNotaFiscal(r.nf)}</td>
               </tr>`;
             }).join('')}</tbody></table></div>`;
     };
@@ -2699,7 +3799,9 @@
           : `<div class="table-wrap"><table>
               <thead><tr><th>Veículo</th><th>Itens aplicados</th><th class="num">Lançamentos</th><th>Última saída</th></tr></thead>
               <tbody>${veiculos.map((v) => `<tr>
-                <td><span class="placa">${escapeHtml(v.placa)}</span></td>
+                <td>${veicPorPlaca[v.placa]
+                  ? `<a class="placa-link" href="#/frota/veiculos/${veicPorPlaca[v.placa].id}"><span class="placa">${escapeHtml(v.placa)}</span><span class="cell-sub">${escapeHtml(descVeiculo(veicPorPlaca[v.placa]))}</span></a>`
+                  : `<span class="placa">${escapeHtml(v.placa)}</span>`}</td>
                 <td>${Object.keys(v.itens).map((nome) => `<span class="mov-q out">${escapeHtml(fmtQtd(v.itens[nome].qtd, v.itens[nome].unidade))}</span> ${escapeHtml(nome)}`).join('<br>')}</td>
                 <td class="num mono">${v.lanc}</td>
                 <td class="nowrap">${fmtDateTime(v.ultima)}</td>
@@ -2714,6 +3816,7 @@
     let deb;
     $('pa-q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(drawMovs, 200); });
     $('pa-acao').addEventListener('change', drawMovs);
+    $('pa-so-nf').addEventListener('change', drawMovs);
     drawPeriodo();
 
     // Planilha do painel: estoque atual, resumo por item, consumo por veículo
@@ -2737,9 +3840,10 @@
           veiculos.forEach((v) => Object.keys(v.itens).forEach((nome) => pv.push([v.placa, nome, v.itens[nome].qtd, v.itens[nome].unidade, v.lanc, v.ultima || ''])));
           add('Consumo por veículo', pv);
         }
-        const lm = [['Quando', 'Operador', 'Ação', 'Item', 'Quantidade', 'Unidade', 'Estoque após', 'Veículo', 'Motivo / detalhes']];
+        const lm = [['Quando', 'Operador', 'Ação', 'Item', 'Quantidade', 'Unidade', 'Estoque após', 'Veículo', 'Motivo / detalhes', 'Nota fiscal anexada']];
         filtradas.forEach((r) => lm.push([r.ts || '', r.actor || '', (ACAO_MOV[r.action] || {}).rotulo || r.action, r.item || '',
-          r.qtd == null ? '' : r.qtd, r.unidade || '', r.estoque == null ? '' : r.estoque, r.placa || '', textoMov(r)]));
+          r.qtd == null ? '' : r.qtd, r.unidade || '', r.estoque == null ? '' : r.estoque, r.placa || '', textoMov(r),
+          r.nf ? (r.nf.nome || r.nf.arquivo) : '']));
         add('Movimentações', lm);
         XLSX.writeFile(wb, `${cfg.arquivo}-${todayStr()}.xlsx`);
         toast('Planilha do painel baixada.');
@@ -3603,10 +4707,10 @@
     remover_dono: 'Removeu dono', leitura: 'Leitura QR', status: 'Alterou status',
     inventario: 'Inventário', login: 'Entrou', logout: 'Saiu', config: 'Configurações',
     ho_saida: 'Saída p/ Home Office', ho_volta: 'Devolução Home Office',
-    entrada: 'Entrada de estoque', saida: 'Saída de estoque',
+    entrada: 'Entrada de estoque', saida: 'Saída de estoque', importar: 'Importou planilha', sincronizar: 'Sincronizou com o TMS',
     seed: 'Sistema',
   };
-  const ENTITY_LABELS = { asset: 'Item', peripheral: 'Sub-item', person: 'Pessoa', room: 'Sala', homeoffice: 'Home Office', assignment: 'Vínculo', user: 'Operador', material: 'Material', frota: 'Item de frota', sistema: 'Sistema' };
+  const ENTITY_LABELS = { asset: 'Item', peripheral: 'Sub-item', person: 'Pessoa', room: 'Sala', homeoffice: 'Home Office', assignment: 'Vínculo', user: 'Operador', material: 'Material', frota: 'Item de frota', veiculo: 'Veículo', manutencao: 'Manutenção', sistema: 'Sistema' };
   function auditActionLabel(a) { return ACTION_LABELS[a] || a; }
 
   async function renderAudit() {
@@ -3784,6 +4888,15 @@
       (dump.materiais || []).forEach((m) => matRows.push([m.nome || '', m.quantidade == null ? '' : m.quantidade, m.minimo == null ? '' : m.minimo, m.updated_at || m.created_at || '']));
       add('Materiais', matRows);
       add('Frota', frotaRowsXlsx(dump.frota_itens));
+      const veicRows = [['Placa', 'Categoria', 'Tipo', 'Status no TMS', 'Arquivado no TMS', 'Fora do TMS', 'Propriedade', 'Nº da frota', 'Marca', 'Modelo', 'Ano', 'Km atual', 'RENAVAM', 'Chassi', 'Observações']];
+      (dump.veiculos || []).forEach((v) => veicRows.push([v.placa, v.categoria === 'reboque' ? 'Reboque' : 'Veículo', rotuloDe(tiposVeiculo(), v.tipo),
+        rotuloDe(situacoesVeiculo(), v.status), v.arquivado ? 'Sim' : 'Não', v.fora_do_tms ? 'Sim' : 'Não', v.propriedade ? rotuloDe(propriedadesVeiculo(), v.propriedade) : '',
+        v.frota || '', v.marca || '', v.modelo || '', v.ano || '', v.km_atual == null ? '' : v.km_atual, v.renavam || '', v.chassi || '', v.obs || '']));
+      add('Veículos', veicRows);
+      const manRows = [['Data', 'Placa', 'Serviço', 'Tipo', 'Km', 'Custo (R$)', 'Oficina', 'Observações', 'Registrado por', 'Registrado em']];
+      (dump.manutencoes || []).forEach((m) => manRows.push([m.data, m.placa, m.servico, m.tipo === 'corretiva' ? 'Corretiva' : 'Preventiva',
+        m.km == null ? '' : m.km, m.custo_cents == null ? '' : m.custo_cents / 100, m.oficina || '', m.obs || '', m.created_by || '', m.created_at || '']));
+      add('Manutenções', manRows);
 
       const userRows = [['Login', 'Nome', 'Papel', 'Ativo', 'Criado em', 'Bloqueio de alteração', 'Acessos por aba']];
       (dump.users || []).forEach((u) => userRows.push([u.login, u.name, u.role === 'admin' ? 'Administrador' : 'Operador',
